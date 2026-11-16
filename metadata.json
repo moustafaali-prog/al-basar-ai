@@ -1,0 +1,6 @@
+{
+  "name": "Al-Basar: School Vision Screening",
+  "description": "Arabic-first local data-entry and preliminary vision-screening interface for a school research project. It is not a validated diagnostic device.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}

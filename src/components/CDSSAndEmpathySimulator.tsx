@@ -1,0 +1,331 @@
+import React, { useRef, useEffect, useCallback } from 'react';
+import {
+  AlertOctagon,
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardList,
+  Download,
+  Eye,
+  Save,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
+import { classifyClinicalDecision, LOGMAR_MAP } from '../utils/acuityMath';
+
+interface CDSSProps {
+  childId: string;
+  examinerId: string;
+  parentalConsent: number;
+  schoolName: string;
+  schoolSector: string;
+  gradeLevel: number;
+  ageYears: number;
+  gender: string;
+  wearsGlasses: number;
+  crossoverSequence: string;
+  paperOd: string;
+  paperOs: string;
+  paperTimeSec: number;
+  smartOd: string;
+  smartOs: string;
+  smartTimeSec: number;
+  hirschbergMM: number;
+  mrd1MM: number;
+  hirschbergRecorded: boolean;
+  mrd1Recorded: boolean;
+  triageOcularFlag: number;
+  asthenopiaScore: number;
+  referralPHCC: string;
+  onCommitRecord: () => void;
+  onProceedToDatabase: () => void;
+}
+
+type VerdictTone = 'pass' | 'warn' | 'urgent' | 'pending';
+
+const NURSING_INSTRUCTIONS: Record<VerdictTone, string[]> = {
+  pass: [
+    'طمئن ولي الأمر أن الفحص الأولي لم يُظهر إشارة إحالة.',
+    'شجّع على إعادة الفحص سنوياً، والرجوع فوراً عند أي شكوى في الرؤية.',
+    'سلّم بطاقة ولي الأمر عند الطلب، ووثّق أن النتيجة أُبلغت.',
+  ],
+  warn: [
+    'أبلغ ولي الأمر أن الطفل يحتاج مراجعة مركز الصحة الأولية خلال أسبوعين.',
+    'سلّمه بطاقة ولي الأمر مع اسم المركز ورقم التواصل.',
+    'ذكّره بإحضار النظارة الطبية إن كان يستخدمها.',
+    'سجّل موعد المراجعة في متابعة السجل.',
+  ],
+  urgent: [
+    'أبلغ ولي الأمر بضرورة مراجعة الطبيب خلال 48 ساعة.',
+    'تأكد من وجود مرافق ووسيلة نقل مناسبة.',
+    'سلّم بطاقة ولي الأمر ورقم المركز الصحي أو المستشفى.',
+    'أبلغ مشرف الصحة المدرسية بالحالة قبل نهاية اليوم.',
+  ],
+  pending: [
+    'أكمل فحص العينين وقياسات العين قبل تسليم أي إرشادات لولي الأمر.',
+    'لا تُبلغ نتيجة غير مكتملة أو مؤقتة.',
+  ],
+};
+
+const VERDICT_COPY: Record<VerdictTone, { title: string; subtitle: string; icon: typeof CheckCircle2 }> = {
+  pass: {
+    title: 'سليم',
+    subtitle: 'لا توجد إشارة إحالة في الفحص الأولي',
+    icon: CheckCircle2,
+  },
+  warn: {
+    title: 'يحتاج مراجعة',
+    subtitle: 'مراجعة مركز الصحة الأولية خلال أسبوعين',
+    icon: AlertTriangle,
+  },
+  urgent: {
+    title: 'إحالة عاجلة',
+    subtitle: 'مراجعة الطبيب خلال 48 ساعة',
+    icon: AlertOctagon,
+  },
+  pending: {
+    title: 'النتيجة غير مكتملة',
+    subtitle: 'أكمل خطوات الفحص لعرض التوصية',
+    icon: AlertTriangle,
+  },
+};
+
+const resolveTone = (urgency: string): VerdictTone => {
+  if (urgency === 'MODEL_NO_FLAG') return 'pass';
+  if (urgency === 'MODEL_REVIEW') return 'warn';
+  if (urgency === 'MODEL_PRIORITY') return 'urgent';
+  return 'pending';
+};
+
+export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
+  childId,
+  parentalConsent,
+  schoolName,
+  schoolSector,
+  gradeLevel,
+  ageYears,
+  gender,
+  wearsGlasses,
+  paperOd,
+  paperOs,
+  paperTimeSec,
+  smartOd,
+  smartOs,
+  smartTimeSec,
+  hirschbergMM,
+  mrd1MM,
+  hirschbergRecorded,
+  mrd1Recorded,
+  triageOcularFlag,
+  asthenopiaScore,
+  referralPHCC,
+  onCommitRecord,
+  onProceedToDatabase,
+}) => {
+  const blackboardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const isSmartAcuityComplete = Boolean(smartOd.trim() && smartOs.trim());
+  const activeOd = smartOd.trim() || 'غير مفحوص';
+  const activeOs = smartOs.trim() || 'غير مفحوص';
+
+  const isBiometryComplete = hirschbergRecorded && mrd1Recorded;
+  const decision = isSmartAcuityComplete && isBiometryComplete
+    ? classifyClinicalDecision(smartOd, smartOs, hirschbergMM, mrd1MM, asthenopiaScore)
+    : {
+        urgency: 'PENDING' as const,
+        categoryAr: !isSmartAcuityComplete ? 'بانتظار إكمال الفحص الرقمي للعينين' : 'بانتظار توثيق قياسات العين',
+        detailsAr: !isSmartAcuityComplete
+          ? 'لا يُحسب ملخص الفرز حتى تُسجّل نتيجتا الفحص الرقمي بشكل مستقل.'
+          : 'لا يُحسب ملخص الفرز حتى تُوثق قياسات Hirschberg وMRD₁ أو يؤكد الفاحص إدخالهما من قياس فعلي.',
+        referralCode: 0,
+      };
+
+  const tone = resolveTone(decision.urgency);
+  const verdict = VERDICT_COPY[tone];
+  const VerdictIcon = verdict.icon;
+
+  const odLog = smartOd ? (LOGMAR_MAP[smartOd] ?? 0) : 0;
+  const osLog = smartOs ? (LOGMAR_MAP[smartOs] ?? 0) : 0;
+  const worstLog = isSmartAcuityComplete ? Math.max(odLog, osLog) : 0;
+  const worstSnellen = isSmartAcuityComplete ? (odLog >= osLog ? smartOd : smartOs) : 'بانتظار القياس';
+
+  const drawBlackboard = useCallback(() => {
+    const canvas = blackboardCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.filter = 'none';
+    ctx.fillStyle = '#14532d';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#78350f';
+    ctx.lineWidth = 14;
+    ctx.strokeRect(7, 7, canvas.width - 14, canvas.height - 14);
+
+    const blurRadius = (worstLog * 12.0).toFixed(1);
+    ctx.filter = `blur(${blurRadius}px)`;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+
+    ctx.font = 'bold 24px system-ui';
+    ctx.fillText('بسم الله الرحمن الرحيم', canvas.width / 2, 48);
+
+    ctx.font = 'bold 20px system-ui';
+    ctx.fillText('درس الرياضيات:  ٣٥ + ١٥ = ٥٠', canvas.width / 2, 92);
+
+    ctx.font = '17px system-ui';
+    ctx.fillText('قال المعلم: العلم نورٌ يضيء طريق المستقبل', canvas.width / 2, 134);
+
+    ctx.filter = 'none';
+    ctx.fillStyle = '#fef08a';
+    ctx.font = 'bold 13px system-ui';
+    ctx.fillText(
+      `بطاقة ولي الأمر | كود التلميذ: ${childId} | الرؤية المقاسة: ${worstSnellen}`,
+      canvas.width / 2,
+      176
+    );
+
+    ctx.fillStyle = '#bbf7d0';
+    ctx.font = '11px system-ui';
+    ctx.fillText(
+      `الجهة المسجلة للإحالة: ${referralPHCC || 'غير محددة'}`,
+      canvas.width / 2,
+      202
+    );
+  }, [worstLog, worstSnellen, childId, referralPHCC]);
+
+  useEffect(() => {
+    drawBlackboard();
+  }, [drawBlackboard]);
+
+  const downloadParentalCard = () => {
+    const canvas = blackboardCanvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `AlBasar_ReferralCard_${childId}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const recordCode = childId.trim() || 'BAB-###';
+  const canCommit = Boolean(paperOd && paperOs && isSmartAcuityComplete && isBiometryComplete);
+  const missingRequirements = [
+    !paperOd || !paperOs ? 'نتيجة الفحص الورقي للعينين' : '',
+    !isSmartAcuityComplete ? 'الفحص الرقمي للعينين' : '',
+    !isBiometryComplete ? 'توثيق قياسات العين' : '',
+  ].filter(Boolean);
+
+  const bannerTitle = tone === 'pass'
+    ? 'اجتياز — بصر سليم'
+    : tone === 'urgent'
+      ? 'إحالة عاجلة — مراجعة خلال 48 ساعة'
+      : tone === 'warn'
+        ? 'إحالة — مراجعة المركز الصحي'
+        : 'النتيجة غير مكتملة';
+
+  const verdictLabel = decision.referralCode === 1
+    ? 'إحالة · REFER'
+    : tone === 'pending'
+      ? 'بانتظار · PENDING'
+      : 'اجتياز · PASS';
+
+  return (
+    <div className="whoeyes-step4" dir="rtl">
+      <section className="result-stage">
+        <div className={`result-hero result-hero--${tone}`} role="status" aria-live="polite">
+          <div className="result-hero__top">
+            <span className="result-hero__icon" aria-hidden="true">
+              <VerdictIcon size={38} />
+            </span>
+            <div className="result-hero__copy">
+              <span className="result-hero__eyebrow">{verdictLabel} · {recordCode}</span>
+              <h1>{bannerTitle}</h1>
+              <p>{verdict.subtitle}</p>
+            </div>
+          </div>
+
+          <div className="result-hero__metrics">
+            <div><small>العين اليمنى OD</small><strong>{activeOd}</strong></div>
+            <div><small>العين اليسرى OS</small><strong>{activeOs}</strong></div>
+            <div><small>أسوأ عين</small><strong>{worstSnellen}</strong></div>
+            <div><small>Hirschberg</small><strong>{hirschbergRecorded ? `${hirschbergMM.toFixed(2)} mm` : '—'}</strong></div>
+            <div><small>MRD₁</small><strong>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : '—'}</strong></div>
+          </div>
+
+          <p className="result-hero__detail">{decision.detailsAr}</p>
+
+          <div className="result-hero__meta">
+            <span className="pill">{recordCode}</span>
+            {referralPHCC && (
+              <span className="result-hero__phcc">
+                <ShieldCheck size={14} aria-hidden="true" />
+                المركز الصحي: {referralPHCC}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="result-board">
+          <div className="result-board__head">
+            <span><Eye size={18} aria-hidden="true" /> بطاقة السبورة للأم</span>
+            <small>محاكاة ما يراه الطفل</small>
+          </div>
+          <div className="blackboard-frame">
+            <canvas
+              ref={blackboardCanvasRef}
+              width={600}
+              height={220}
+              aria-label={`بطاقة السبورة للأم للتلميذ ${recordCode}`}
+              role="img"
+            />
+          </div>
+          <p className="who-tips">
+            نصائح WHO 2025 للرعاية البصرية: 90 دقيقة في الهواء الطلق يومياً · قاعدة 20-20-20 للراحة البصرية
+          </p>
+        </div>
+      </section>
+
+      <section className="nursing-card">
+        <h3>
+          <ClipboardList size={18} aria-hidden="true" />
+          إرشادات التمريض لولي الأمر
+        </h3>
+        <ul>
+          {NURSING_INSTRUCTIONS[tone].map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </section>
+
+      <div className="final-actions">
+        <button
+          type="button"
+          onClick={onCommitRecord}
+          disabled={!canCommit}
+          className="final-save-cta"
+        >
+          <span className="final-save-cta__icon" aria-hidden="true"><Save size={24} /></span>
+          <span className="final-save-cta__copy">
+            <strong>💾 حفظ السجل والانتقال للتلميذ التالي</strong>
+            <small>{recordCode}</small>
+          </span>
+        </button>
+        <button type="button" onClick={downloadParentalCard} className="final-download-btn">
+          <Download size={18} aria-hidden="true" />
+          📥 تحميل بطاقة السبورة للأم (PNG)
+        </button>
+        {!canCommit && (
+          <p className="final-actions__hint" role="status">
+            أكمل أولاً: {missingRequirements.join('، ')}. لا يمكن حفظ سجل غير مكتمل.
+          </p>
+        )}
+      </div>
+
+      <p className="field-hint result-disclaimer">
+        <ShieldCheck size={13} aria-hidden="true" />
+        العرض التوضيحي تقديري ولا يُستخدم للتشخيص، والقياس المعتمد هو ما سجله الفاحص.
+      </p>
+    </div>
+  );
+};

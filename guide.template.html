@@ -1,0 +1,1433 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light" />
+<title>دليل البصر AI الميداني والتدريبي | من التسجيل إلى بطاقة الأم</title>
+<meta name="description" content="دليل عربي مدمج لمنظومة البصر AI: خطوات الفحص الأربع، السيناريوهات الميدانية، المعايرة، حدود الاستخدام، والتحميل — بلقطات حقيقية من التطبيق." />
+<style>
+  :root {
+    --ink: #0b1b2b;
+    --ink-2: #183246;
+    --muted: #5b6b7c;
+    --muted-2: #7b8b9b;
+    --line: #dbe5ee;
+    --line-strong: #c7d5e3;
+    --paper: #ffffff;
+    --bg: #f4f8fb;
+    --bg-2: #eef4f8;
+    --teal: #0f766e;
+    --teal-dark: #0a4f4a;
+    --teal-soft: #e6f4f1;
+    --blue: #0b57d0;
+    --blue-soft: #e8f0fe;
+    --gold: #b7791f;
+    --gold-soft: #fff7e6;
+    --danger: #b42318;
+    --danger-soft: #fef3f2;
+    --success: #146c2e;
+    --success-soft: #e9f7ee;
+    --shadow: 0 1px 2px rgba(11, 27, 43, .04), 0 16px 40px -28px rgba(11, 27, 43, .28);
+    --shadow-lg: 0 30px 80px -45px rgba(7, 25, 39, .55);
+    --radius: 22px;
+    --radius-sm: 14px;
+    --font: "Segoe UI", "Tahoma", "Arial", sans-serif;
+    --mono: "Consolas", "Courier New", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(900px 500px at 100% -10%, #e6f4f1 0%, transparent 60%),
+      radial-gradient(700px 500px at 0% 20%, #e8f0fe 0%, transparent 55%),
+      var(--bg);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.8;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  img { max-width: 100%; height: auto; }
+  a { color: var(--blue); text-underline-offset: 3px; }
+  a:hover { color: var(--teal-dark); }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  ::selection { background: #cfe7e2; color: #052e2b; }
+
+  .skip {
+    position: fixed; inset-block-start: 8px; inset-inline-start: 8px;
+    z-index: 999; transform: translateY(-160%);
+    background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px;
+  }
+  .skip:focus { transform: none; }
+
+  #progress {
+    position: fixed; inset-block-start: 0; inset-inline: 0; height: 3px;
+    z-index: 100; background: transparent; pointer-events: none;
+  }
+  #progress > span {
+    display: block; height: 100%; width: 0;
+    background: linear-gradient(90deg, var(--teal), #34b3a0, var(--gold));
+  }
+
+  /* ---------- Top navigation ---------- */
+  .topbar {
+    position: sticky; inset-block-start: 0; z-index: 80;
+    background: rgba(255, 255, 255, .93);
+    border-bottom: 1px solid rgba(199, 213, 227, .7);
+    backdrop-filter: blur(16px);
+  }
+  .topbar__inner {
+    width: min(1180px, 100%); margin-inline: auto;
+    min-height: 68px; padding: 8px clamp(12px, 3vw, 28px);
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; text-decoration: none; color: var(--ink); }
+  .brand__mark {
+    width: 42px; height: 42px; flex: 0 0 auto; border-radius: 14px;
+    display: grid; place-items: center; color: #fff;
+    background: linear-gradient(145deg, #0b57d0, #0842a0);
+    box-shadow: 0 10px 24px -12px rgba(11, 87, 208, .8);
+  }
+  .brand__title { font-size: 17px; font-weight: 800; line-height: 1.2; }
+  .brand__title span { color: var(--blue); font-size: 11px; letter-spacing: .04em; }
+  .brand__sub { color: var(--muted); font-size: 10px; font-weight: 600; line-height: 1.3; }
+  .nav { display: flex; align-items: center; gap: 2px; }
+  .nav a {
+    color: var(--muted); text-decoration: none; font-size: 12.5px; font-weight: 700;
+    padding: 8px 9px; border-radius: 9px; white-space: nowrap;
+  }
+  .nav a:hover, .nav a.is-active { color: var(--teal-dark); background: var(--teal-soft); }
+  .topbar__actions { display: flex; align-items: center; gap: 7px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; padding: 0 17px; border-radius: 999px;
+    border: 1px solid transparent; text-decoration: none; cursor: pointer;
+    font-family: inherit; font-size: 13px; font-weight: 800; line-height: 1;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn--primary { background: var(--blue); color: #fff; box-shadow: 0 10px 20px -14px rgba(11, 87, 208, .9); }
+  .btn--primary:hover { background: #0842a0; color: #fff; }
+  .btn--ghost { background: var(--paper); color: var(--ink-2); border-color: var(--line-strong); }
+  .btn--ghost:hover { border-color: var(--teal); color: var(--teal-dark); }
+  .btn--light { background: #fff; color: var(--ink); }
+  .btn--light:hover { background: #eaf7f4; color: var(--teal-dark); }
+  .btn--outline-light { border-color: rgba(255,255,255,.4); color: #fff; background: rgba(255,255,255,.06); }
+  .btn--outline-light:hover { background: rgba(255,255,255,.14); color: #fff; }
+  .btn--sm { min-height: 36px; padding: 0 12px; font-size: 11.5px; }
+  .icon-btn {
+    width: 42px; height: 42px; border-radius: 999px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink-2); cursor: pointer; display: grid; place-items: center;
+  }
+  .icon-btn:hover { border-color: var(--teal); color: var(--teal-dark); }
+
+  /* ---------- Hero ---------- */
+  .hero {
+    position: relative; overflow: hidden; color: #fff;
+    background:
+      radial-gradient(700px 380px at 88% 6%, rgba(52, 179, 160, .22), transparent 60%),
+      radial-gradient(600px 400px at 4% 90%, rgba(11, 87, 208, .25), transparent 60%),
+      linear-gradient(135deg, #071a29 0%, #0a2b3d 48%, #0d4750 100%);
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .20;
+    background-image:
+      linear-gradient(rgba(255,255,255,.10) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: linear-gradient(180deg, rgba(0,0,0,.8), transparent 85%);
+  }
+  .hero__letters {
+    position: absolute; inset-inline-start: 4%; inset-block-start: 12%;
+    display: grid; gap: 8px; opacity: .10; color: #fff;
+    font-weight: 900; line-height: 1; pointer-events: none; user-select: none;
+  }
+  .hero__letters span:nth-child(1) { font-size: 96px; }
+  .hero__letters span:nth-child(2) { font-size: 62px; }
+  .hero__letters span:nth-child(3) { font-size: 36px; }
+  .hero__letters span:nth-child(4) { font-size: 22px; }
+  .hero__inner {
+    position: relative; z-index: 1;
+    width: min(1180px, 100%); margin-inline: auto;
+    padding: clamp(46px, 7vw, 86px) clamp(16px, 4vw, 34px) clamp(54px, 7vw, 82px);
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr);
+    align-items: center; gap: clamp(30px, 6vw, 70px);
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: #b7ede2; font-size: 12px; font-weight: 800; letter-spacing: .02em;
+  }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: #63d3c0; border-radius: 2px; }
+  .hero h1 {
+    margin: 14px 0 14px; font-size: clamp(32px, 5.2vw, 58px);
+    line-height: 1.16; letter-spacing: -0.025em; font-weight: 900;
+  }
+  .hero h1 em { font-style: normal; color: #8ae5d5; }
+  .hero__lead {
+    margin: 0; max-width: 680px; color: #d3e5ea;
+    font-size: clamp(15px, 1.7vw, 18px); line-height: 1.85;
+  }
+  .hero__chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 7px 11px; border-radius: 999px;
+    background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.16);
+    color: #e9f7f8; font-size: 11.5px; font-weight: 700;
+  }
+  .chip strong { color: #fff; font-weight: 900; }
+  .hero__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .hero__meta {
+    margin-top: 22px; color: #9fc0c8; font-size: 11px; font-weight: 600;
+  }
+  .hero__visual { position: relative; display: flex; justify-content: center; align-items: center; }
+  .hero__visual::before {
+    content: ""; position: absolute; width: 360px; height: 360px; border-radius: 50%;
+    border: 1px solid rgba(138,229,213,.22);
+    box-shadow: 0 0 0 34px rgba(138,229,213,.05), 0 0 0 72px rgba(138,229,213,.035);
+  }
+  .phone {
+    position: relative; width: min(292px, 100%);
+    border: 9px solid #061620; border-radius: 40px;
+    background: #061620; box-shadow: var(--shadow-lg);
+    overflow: hidden; z-index: 1;
+  }
+  .phone::before {
+    content: ""; position: absolute; z-index: 2; inset-block-start: 0; inset-inline-start: 50%;
+    width: 86px; height: 20px; transform: translateX(-50%);
+    background: #061620; border-radius: 0 0 15px 15px;
+  }
+  .phone img { display: block; width: 100%; border-radius: 31px; }
+  .hero__note {
+    position: absolute; z-index: 2; inset-block-end: 20px; inset-inline-start: -6px;
+    background: #fff; color: var(--ink); border-radius: 14px; padding: 9px 13px;
+    box-shadow: var(--shadow-lg); font-size: 10px; font-weight: 800;
+    display: flex; align-items: center; gap: 7px; max-width: 210px;
+  }
+  .hero__note span { width: 8px; height: 8px; border-radius: 50%; background: #21a179; flex: 0 0 auto; }
+
+  /* ---------- Layout / typography ---------- */
+  .section {
+    width: min(1120px, 100%); margin-inline: auto;
+    padding: clamp(46px, 6vw, 76px) clamp(16px, 4vw, 26px);
+    scroll-margin-top: 78px;
+  }
+  .section--flush { padding-top: 0; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--teal); font-size: 11.5px; font-weight: 900; letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .kicker::before { content: ""; width: 20px; height: 2px; border-radius: 2px; background: var(--teal); }
+  .section h2 {
+    margin: 10px 0 10px; font-size: clamp(25px, 3.2vw, 38px);
+    line-height: 1.35; letter-spacing: -0.02em; font-weight: 900;
+  }
+  .section h2 .muted { color: var(--muted-2); font-weight: 700; }
+  .section__lead {
+    margin: 0; max-width: 860px; color: var(--muted);
+    font-size: clamp(14px, 1.5vw, 16.5px); line-height: 1.9;
+  }
+  .section-head { margin-bottom: 26px; }
+  h3 { line-height: 1.4; }
+  p { margin: 0 0 12px; }
+  p:last-child { margin-bottom: 0; }
+  ul, ol { margin: 0; padding-inline-start: 1.2em; }
+  li { margin-bottom: 6px; }
+  strong { font-weight: 800; }
+
+  .card {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+  }
+  .card-pad { padding: clamp(17px, 2.8vw, 26px); }
+  .grid { display: grid; gap: 14px; }
+  .grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  .note {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 14px 16px; border-radius: var(--radius-sm);
+    border: 1px solid; font-size: 13.5px; line-height: 1.8;
+  }
+  .note__icon {
+    width: 30px; height: 30px; flex: 0 0 auto; border-radius: 9px;
+    display: grid; place-items: center; font-size: 15px; font-weight: 900;
+    background: rgba(255,255,255,.7);
+  }
+  .note strong { display: block; margin-bottom: 2px; }
+  .note--info { background: var(--blue-soft); border-color: #c7d9f8; color: #123a6b; }
+  .note--warn { background: var(--gold-soft); border-color: #f2d18a; color: #6b4508; }
+  .note--danger { background: var(--danger-soft); border-color: #f6c7c2; color: #7a1a13; }
+  .note--success { background: var(--success-soft); border-color: #bfe6c9; color: #0d4d22; }
+
+  .eyebrow-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 800;
+    background: var(--bg-2); color: var(--muted); border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .tag--teal { background: var(--teal-soft); border-color: #bfe3dc; color: var(--teal-dark); }
+  .tag--gold { background: var(--gold-soft); border-color: #f2d18a; color: #7a4b08; }
+  .tag--danger { background: var(--danger-soft); border-color: #f6c7c2; color: #7a1a13; }
+  .tag--blue { background: var(--blue-soft); border-color: #c7d9f8; color: #123a6b; }
+
+  /* ---------- Quick cards ---------- */
+  .quick {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px; margin-top: -32px; position: relative; z-index: 3;
+  }
+  .quick__card {
+    display: block; text-decoration: none; color: var(--ink);
+    background: #fff; border: 1px solid var(--line); border-radius: 18px;
+    padding: 17px 16px; box-shadow: var(--shadow);
+    transition: transform .18s ease, border-color .18s ease;
+  }
+  .quick__card:hover { transform: translateY(-3px); border-color: #9fd6cc; color: var(--ink); }
+  .quick__num {
+    display: inline-grid; place-items: center; width: 28px; height: 28px;
+    border-radius: 9px; background: var(--teal-soft); color: var(--teal-dark);
+    font-size: 12px; font-weight: 900; margin-bottom: 9px;
+  }
+  .quick__title { display: block; font-size: 14px; font-weight: 900; line-height: 1.4; }
+  .quick__sub { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+  /* ---------- Setup ---------- */
+  .setup-grid { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); gap: 22px; align-items: start; }
+  .checklist { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  .checklist li {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 13px; border: 1px solid var(--line); border-radius: 13px;
+    background: #fff; font-size: 13.5px; line-height: 1.7; margin: 0;
+  }
+  .checklist li::before {
+    content: "✓"; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--success-soft); color: var(--success);
+    font-size: 12px; font-weight: 900; margin-top: 1px;
+  }
+  .checklist b { font-weight: 900; }
+
+  .figure { margin: 0; }
+  .figure .phone { margin-inline: auto; }
+  .caption {
+    margin-top: 12px; text-align: center; color: var(--muted);
+    font-size: 11.5px; line-height: 1.6;
+  }
+  .caption b { color: var(--ink-2); }
+  .phone-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .phone-grid .phone { width: 100%; max-width: 250px; }
+  .phone-grid .caption { margin-top: 8px; font-size: 10.5px; }
+
+  .steps { display: grid; gap: 18px; counter-reset: step; }
+  .step {
+    position: relative; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(240px, .9fr);
+    gap: clamp(20px, 4vw, 42px); align-items: start;
+    padding: clamp(18px, 3vw, 30px);
+    background: #fff; border: 1px solid var(--line); border-radius: 26px;
+    box-shadow: var(--shadow); scroll-margin-top: 84px;
+  }
+  .step--reverse { grid-template-columns: minmax(240px, .9fr) minmax(0, 1.1fr); }
+  .step--reverse .step__body { order: 2; }
+  .step--reverse .step__visual { order: 1; }
+  .step__head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 12px; }
+  .step__num {
+    flex: 0 0 auto; width: 48px; height: 48px; border-radius: 16px;
+    display: grid; place-items: center; font-size: 20px; font-weight: 900;
+    color: #fff; background: linear-gradient(145deg, var(--teal), var(--teal-dark));
+    box-shadow: 0 12px 24px -14px rgba(15, 118, 110, .9);
+  }
+  .step h3 { margin: 0; font-size: clamp(20px, 2.4vw, 27px); font-weight: 900; letter-spacing: -.015em; }
+  .step__sub { color: var(--muted); font-size: 12px; font-weight: 600; margin-top: 2px; }
+  .step__body > p { color: var(--ink-2); font-size: 14px; }
+  .do-list { counter-reset: do; list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 9px; }
+  .do-list li {
+    position: relative; padding-inline-start: 34px; margin: 0;
+    color: var(--ink-2); font-size: 13.5px; line-height: 1.75;
+  }
+  .do-list li::before {
+    counter-increment: do; content: counter(do);
+    position: absolute; inset-inline-start: 0; inset-block-start: 2px;
+    width: 23px; height: 23px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--teal-soft); color: var(--teal-dark);
+    font-size: 10.5px; font-weight: 900;
+  }
+  .do-list li b { color: var(--ink); }
+  .step__visual .phone { width: min(292px, 100%); }
+  .step__visual .caption { font-size: 10.5px; }
+  .step__checks { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line-strong); }
+  .step__checks strong { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
+  .mini-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mini-check {
+    display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px;
+    border-radius: 999px; background: var(--bg); border: 1px solid var(--line);
+    color: var(--muted); font-size: 10px; font-weight: 700;
+  }
+  .mini-check::before { content: "✓"; color: var(--success); font-weight: 900; }
+
+  /* ---------- Tables ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+  table { width: 100%; border-collapse: collapse; min-width: 620px; font-size: 13px; }
+  th, td { padding: 11px 13px; text-align: start; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f2f7fa; color: var(--ink-2); font-size: 11.5px; font-weight: 900; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td code, .mono { font-family: var(--mono); font-size: .92em; direction: ltr; unicode-bidi: embed; }
+  .row-priority td:first-child { border-inline-start: 4px solid var(--danger); }
+  .row-review td:first-child { border-inline-start: 4px solid var(--gold); }
+  .row-pass td:first-child { border-inline-start: 4px solid var(--success); }
+
+  /* ---------- Scenarios ---------- */
+  .scenarios { display: grid; gap: 12px; }
+  .scenario {
+    background: #fff; border: 1px solid var(--line); border-radius: 18px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .scenario summary {
+    list-style: none; cursor: pointer; display: flex; align-items: flex-start; gap: 12px;
+    padding: 16px 17px; user-select: none;
+  }
+  .scenario summary::-webkit-details-marker { display: none; }
+  .scenario summary::after {
+    content: "+"; margin-inline-start: auto; flex: 0 0 auto;
+    width: 26px; height: 26px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--bg-2); color: var(--muted);
+    font-size: 15px; font-weight: 900;
+  }
+  .scenario[open] summary::after { content: "−"; background: var(--teal-soft); color: var(--teal-dark); }
+  .scenario__num {
+    flex: 0 0 auto; width: 30px; height: 30px; border-radius: 10px;
+    display: grid; place-items: center; background: var(--teal-soft); color: var(--teal-dark);
+    font-size: 11.5px; font-weight: 900;
+  }
+  .scenario__title { font-size: 14.5px; font-weight: 900; line-height: 1.5; }
+  .scenario__hint { display: block; color: var(--muted); font-size: 11.5px; font-weight: 600; margin-top: 2px; }
+  .scenario__body { padding: 0 17px 17px; display: grid; gap: 12px; }
+  .scenario__row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .scenario__label { color: var(--muted); font-size: 10.5px; font-weight: 900; letter-spacing: .02em; }
+  .scenario__row p, .scenario__row ul { margin: 0; font-size: 13px; color: var(--ink-2); }
+  .script {
+    background: #f0f8f6; border: 1px solid #c9e7e1; border-radius: 12px;
+    padding: 10px 12px; color: #14534c; font-size: 12.5px; line-height: 1.7;
+  }
+  .script::before { content: "قل هذا:"; display: block; font-size: 10px; font-weight: 900; color: var(--teal); margin-bottom: 2px; }
+
+  /* ---------- Limits ---------- */
+  .limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .limit {
+    background: #fff; border: 1px solid var(--line); border-radius: 16px;
+    padding: 15px 16px; box-shadow: var(--shadow);
+  }
+  .limit__head { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 6px; }
+  .limit__icon {
+    width: 28px; height: 28px; flex: 0 0 auto; border-radius: 9px;
+    display: grid; place-items: center; background: var(--danger-soft); color: var(--danger);
+    font-size: 13px; font-weight: 900;
+  }
+  .limit:nth-child(even) .limit__icon { background: var(--gold-soft); color: var(--gold); }
+  .limit h3 { margin: 0; font-size: 13.5px; font-weight: 900; }
+  .limit p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.75; }
+  .limit p b { color: var(--ink-2); }
+
+  /* ---------- FAQ ---------- */
+  .faq-list { display: grid; gap: 9px; }
+  .faq {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    overflow: hidden;
+  }
+  .faq summary {
+    list-style: none; cursor: pointer; padding: 13px 15px;
+    display: flex; align-items: flex-start; gap: 10px;
+    font-size: 13.5px; font-weight: 800; line-height: 1.6;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::before {
+    content: "؟"; flex: 0 0 auto; width: 23px; height: 23px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--blue-soft); color: var(--blue);
+    font-size: 11px; font-weight: 900; margin-top: 1px;
+  }
+  .faq[open] summary { color: var(--teal-dark); }
+  .faq__body { padding: 0 15px 14px 51px; color: var(--muted); font-size: 12.5px; line-height: 1.8; }
+
+  /* ---------- Download ---------- */
+  .download {
+    color: #fff;
+    background:
+      radial-gradient(600px 320px at 90% 0%, rgba(52,179,160,.24), transparent 60%),
+      linear-gradient(135deg, #071a29, #0a2b3d 55%, #0d4750);
+  }
+  .download .section { padding-top: clamp(44px, 6vw, 70px); padding-bottom: clamp(50px, 7vw, 82px); }
+  .download .kicker { color: #8ae5d5; }
+  .download .kicker::before { background: #8ae5d5; }
+  .download h2 { color: #fff; }
+  .download .section__lead { color: #c8dde3; }
+  .download-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+  .download-card {
+    display: flex; flex-direction: column; gap: 10px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.15);
+    border-radius: 18px; padding: 18px;
+  }
+  .download-card h3 { margin: 0; font-size: 15px; color: #fff; }
+  .download-card p { margin: 0; color: #bcd4db; font-size: 12px; line-height: 1.7; }
+  .download-card .btn { margin-top: auto; }
+  .url-box {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.15);
+    border-radius: 11px; padding: 8px 10px; margin-top: 4px;
+    font-family: var(--mono); font-size: 10.5px; direction: ltr; text-align: left;
+    color: #d9eef0; word-break: break-all;
+  }
+  .url-box a { color: #d9eef0; text-decoration: none; }
+  .download-note {
+    margin-top: 18px; padding: 14px 16px; border-radius: 14px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    color: #c4dbe1; font-size: 12px; line-height: 1.8;
+  }
+
+  /* ---------- Footer ---------- */
+  footer.site {
+    background: #061620; color: #9db8c1; padding: 26px 18px;
+    font-size: 11.5px; text-align: center;
+  }
+  footer.site strong { color: #e5f4f6; }
+  footer.site .footer-grid {
+    width: min(1120px, 100%); margin-inline: auto;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  footer.site a { color: #bfe3dc; }
+
+  /* ---------- Lightbox ---------- */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 300; background: rgba(3, 12, 20, .88);
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .lightbox.is-open { display: flex; }
+  .lightbox img {
+    max-width: min(92vw, 480px); max-height: 88vh; border-radius: 26px;
+    box-shadow: 0 30px 90px rgba(0,0,0,.6); background: #fff;
+  }
+  .lightbox__close {
+    position: absolute; inset-block-start: 16px; inset-inline-end: 16px;
+    width: 44px; height: 44px; border-radius: 999px; border: 1px solid rgba(255,255,255,.3);
+    background: rgba(255,255,255,.08); color: #fff; font-size: 20px; cursor: pointer;
+  }
+  .zoomable { cursor: zoom-in; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 980px) {
+    .hero__inner { grid-template-columns: 1fr; }
+    .hero__visual { order: -1; }
+    .hero__visual::before { width: 300px; height: 300px; }
+    .hero .phone { width: min(230px, 74vw); }
+    .hero__note { inset-inline-start: auto; inset-inline-end: 0; inset-block-end: 10px; }
+    .nav { display: none; }
+    .quick { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: -24px; }
+    .setup-grid { grid-template-columns: 1fr; }
+    .step, .step--reverse { grid-template-columns: 1fr; }
+    .step__body, .step--reverse .step__body { order: 1; }
+    .step__visual, .step--reverse .step__visual { order: 2; }
+    .step__visual .phone { width: min(270px, 100%); }
+    .download-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    body { font-size: 15px; }
+    .brand__sub { display: none; }
+    .topbar__inner { min-height: 60px; padding-inline: 10px; gap: 8px; }
+    .brand__mark { width: 36px; height: 36px; border-radius: 12px; }
+    .brand__title { font-size: 14px; }
+    .topbar__actions .btn span { display: none; }
+    .topbar__actions .btn { padding: 0 12px; }
+    .section { padding-inline: 13px; }
+    .section h2 { font-size: 25px; }
+    .grid--3, .grid--4, .limits { grid-template-columns: 1fr; }
+    .phone-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .phone-grid .phone { border-width: 6px; border-radius: 28px; }
+    .phone-grid .phone img { border-radius: 21px; }
+    .phone-grid .phone::before { width: 56px; height: 14px; border-radius: 0 0 10px 10px; }
+    .scenario__row { grid-template-columns: 1fr; gap: 3px; }
+    .faq__body { padding-inline-start: 15px; }
+    .hero__actions .btn { flex: 1 1 auto; }
+    .hero__letters { display: none; }
+  }
+  @media (max-width: 460px) {
+    .quick { grid-template-columns: 1fr; }
+    .phone-grid { grid-template-columns: 1fr; }
+    .phone-grid .phone { max-width: 252px; margin-inline: auto; }
+    .hero h1 { font-size: 33px; }
+    .tag { font-size: 9.5px; }
+    .download-card { padding: 15px; }
+  }
+
+  /* ---------- Print ---------- */
+  @media print {
+    @page { size: A4; margin: 14mm; }
+    html { scroll-behavior: auto; }
+    body {
+      background: #fff !important; color: #111; font-size: 10.5pt; line-height: 1.6;
+    }
+    #progress, .topbar, .hero__actions, .hero__visual, .lightbox, .download .btn,
+    .topbar__actions, .quick { display: none !important; }
+    .hero {
+      background: #fff !important; color: #111 !important; border-bottom: 2px solid #14534c;
+    }
+    .hero__inner { display: block; padding: 18mm 0 10mm; }
+    .hero h1 { color: #0b1b2b; font-size: 26pt; }
+    .hero h1 em { color: #0f766e; }
+    .hero__lead, .hero__meta { color: #333; }
+    .chip { color: #111; border-color: #999; background: #f4f4f4; }
+    .section { padding: 10mm 0; page-break-inside: auto; }
+    .section h2 { font-size: 18pt; }
+    .card, .step, .scenario, .limit, .faq, .download-card { box-shadow: none; border-color: #bbb; }
+    .step { page-break-inside: auto; grid-template-columns: 1fr; }
+    .step + .step { page-break-before: always; }
+    .step__visual, .step--reverse .step__visual { display: block; order: 2; margin-top: 5mm; }
+    .step__visual .phone { width: 68mm; margin-inline: 0; border-width: 4px; border-radius: 16px; }
+    .step__visual .phone img { border-radius: 12px; }
+    .step__visual .phone::before { width: 18mm; height: 4mm; border-radius: 0 0 3mm 3mm; }
+    .step__visual .phone-grid { grid-template-columns: 1fr 1fr; gap: 4mm; }
+    .step__visual .caption { text-align: start; font-size: 8pt; }
+    .figure { page-break-inside: avoid; }
+    .scenario { page-break-inside: avoid; }
+    .scenario summary::after, .faq summary::before { display: none; }
+    .scenario:not([open]) .scenario__body { display: grid !important; }
+    .download { background: #fff !important; color: #111 !important; }
+    .download h2, .download-card h3 { color: #111; }
+    .download .section__lead, .download-card p, .download-note { color: #333; }
+    .download-card, .download-note { border-color: #bbb; background: #f7f7f7; }
+    .url-box { background: #fff; border-color: #bbb; color: #111; }
+    .url-box a { color: #111; }
+    a { color: #111; text-decoration: none; }
+    a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 8pt; color: #555; word-break: break-all; }
+    footer.site { background: #fff; color: #333; border-top: 1px solid #bbb; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">تجاوز إلى المحتوى</a>
+<div id="progress" aria-hidden="true"><span></span></div>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <a class="brand" href="#top" aria-label="البصر AI — أعلى الصفحة">
+      <span class="brand__mark" aria-hidden="true">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z"/>
+          <circle cx="12" cy="12" r="3.2"/>
+        </svg>
+      </span>
+      <span>
+        <span class="brand__title">البصر <span>AI</span></span>
+        <span class="brand__sub">الدليل الميداني والتدريبي</span>
+      </span>
+    </a>
+    <nav class="nav" aria-label="أقسام الدليل">
+      <a href="#setup">التهيئة</a>
+      <a href="#steps">المسار</a>
+      <a href="#scenarios">السيناريوهات</a>
+      <a href="#limits">الدقة والحدود</a>
+      <a href="#data">البيانات</a>
+      <a href="#faq">الأسئلة</a>
+    </nav>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" onclick="window.print()" title="طباعة أو حفظ PDF" aria-label="طباعة أو حفظ PDF">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8" rx="1"/>
+        </svg>
+      </button>
+      <a class="btn btn--primary btn--sm" href="#download">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        <span>حمّل التطبيق</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top">
+    <div class="hero__letters" aria-hidden="true"><span>H</span><span>O</span><span>T</span><span>V</span></div>
+    <div class="hero__inner">
+      <div>
+        <div class="eyebrow">جامعة بابل · كلية التمريض · تدريب ميداني</div>
+        <h1>البصر AI<br /><em>من التسجيل إلى بطاقة الأم</em></h1>
+        <p class="hero__lead">
+          دليل واحد يدمج <strong>دليل السيناريوهات الميدانية</strong> مع <strong>التدريب التفاعلي</strong>،
+          ويشرح التطبيق كما هو فعلاً: أربع خطوات متتابعة، لقطات حقيقية من الشاشة، وخطوات قابلة للتنفيذ
+          في المدرسة — مع تصحيح صريح للمعلومات القديمة وحدود الاستخدام.
+        </p>
+        <div class="hero__chips">
+          <span class="chip"><strong>4</strong> خطوات متتابعة</span>
+          <span class="chip"><strong>ورقي</strong> 6m</span>
+          <span class="chip"><strong>رقمي</strong> 2m / 3m</span>
+          <span class="chip"><strong>HOTV</strong> + حرف E</span>
+          <span class="chip"><strong>حفظ محلي</strong> + CSV</span>
+        </div>
+        <div class="hero__actions">
+          <a class="btn btn--light" href="#steps">ابدأ المسار العملي</a>
+          <a class="btn btn--outline-light" href="#download">رابط التطبيق والتحميل</a>
+        </div>
+        <div class="hero__meta">إصدار الدليل 1.0 · نوفمبر 2026 · مبني على النسخة الحالية من التطبيق ولقطات شاشة فعلية</div>
+      </div>
+      <div class="hero__visual">
+        <figure class="phone">
+          <img src="{{IMG:step2-acuity.png}}" alt="لقطة حقيقية من شاشة فحص النظر الرقمي في تطبيق البصر AI" data-zoom />
+        </figure>
+        <div class="hero__note"><span></span> لقطة حقيقية من التطبيق — ليست رسمًا توضيحيًا</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section section--flush">
+    <div class="quick">
+      <a class="quick__card" href="#step-1">
+        <span class="quick__num">01</span>
+        <span class="quick__title">التلميذ والورقي</span>
+        <span class="quick__sub">هوية، موافقة، فرز قبلي، ونتيجة 6m</span>
+      </a>
+      <a class="quick__card" href="#step-2">
+        <span class="quick__num">02</span>
+        <span class="quick__title">النظر الرقمي</span>
+        <span class="quick__sub">HOTV أو حرف E بمسار سريع</span>
+      </a>
+      <a class="quick__card" href="#step-3">
+        <span class="quick__num">03</span>
+        <span class="quick__title">صورة العين</span>
+        <span class="quick__sub">Hirschberg وMRD₁ وأعراض الإجهاد</span>
+      </a>
+      <a class="quick__card" href="#step-4">
+        <span class="quick__num">04</span>
+        <span class="quick__title">النتيجة والبطاقة</span>
+        <span class="quick__sub">قرار الفرز، الإرشادات، والحفظ</span>
+      </a>
+    </div>
+  </div>
+
+  <section class="section" id="setup">
+    <div class="section-head">
+      <span class="kicker">قبل أول تلميذ</span>
+      <h2>ست دقائق تهيئة تمنع أغلب الأخطاء</h2>
+      <p class="section__lead">
+        التطبيق أداة فرز مدرسي، وليس جهاز قياس طبي. نجاح الجلسة يعتمد على المعايرة الفيزيائية،
+        وثبات المسافة، والإضاءة، ووضعية الطفل — وليس على الشاشة وحدها.
+      </p>
+    </div>
+
+    <div class="setup-grid">
+      <div>
+        <ul class="checklist">
+          <li><span><b>جهاز واحد ثابت:</b> استخدم الهاتف/الجهاز نفسه طوال الجلسة. تغيير الجهاز يعني إعادة المعايرة. يُفضّل Chrome أو Edge حديث.</span></li>
+          <li><span><b>سطوع الشاشة:</b> ارفعه إلى أقصى حد، وأوقف السطوع التلقائي والوضع الداكن أثناء الفحص.</span></li>
+          <li><span><b>المعايرة الفيزيائية:</b> من «لوحة المشرف والبيانات» ← «المعايرة»، طابق بطاقة قياسية <span class="mono">85.6 mm</span> أو مسطرة <span class="mono">50 mm</span> مع الشريط الأزرق، واختر مسافة <span class="mono">2.0 m</span> أو <span class="mono">3.0 m</span>.</span></li>
+          <li><span><b>مسافة الفحص:</b> الورقي على <b>6 أمتار</b>، والرقمي على المسافة المختارة (<b>2 أو 3 أمتار</b>). ثبّت علامة على الأرض ولا تقرّب الطفل أثناء الاختبار.</span></li>
+          <li><span><b>المواد الورقية:</b> موافقات موقعة، لوحة سنيلين ورقية 6m، بطاقة HOTV مطبوعة (H O T V)، بطاقات إحالة، وأقلام.</span></li>
+          <li><span><b>الخصوصية:</b> لا تدخل أسماء الأطفال؛ استخدم كود التلميذ فقط. البيانات تُحفظ في متصفح الجهاز، فاحمِ الجهاز وصدّر نسخة احتياطية قبل المسح.</span></li>
+        </ul>
+
+        <div class="note note--warn" style="margin-top:14px">
+          <span class="note__icon">!</span>
+          <div>
+            <strong>المعايرة الافتراضية ليست معايرة.</strong>
+            تبدأ الشاشة بقيمة تقديرية (<span class="mono">3.78 px/mm</span>) وتظهر «ضبط تقديري غير متحقق».
+            لا تبدأ جمع بيانات الدراسة قبل مطابقة المرجع المادي على الجهاز.
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <figure class="figure">
+          <div class="phone">
+            <img src="{{IMG:admin-calibration.png}}" alt="لقطة حقيقية لشاشة المعايرة في لوحة المشرف" data-zoom />
+          </div>
+          <figcaption class="caption"><b>لقطة حقيقية:</b> لوحة المعايرة. اختر المرجع والمسافة، ثم طابق العرض فعليًا.</figcaption>
+        </figure>
+        <div class="note note--info" style="margin-top:14px">
+          <span class="note__icon">i</span>
+          <div>
+            <strong>لماذا 2m أو 3m؟</strong>
+            عند 3m يكبّر التطبيق الرموز هندسيًا بنسبة 1.5× تلقائيًا. عند تغيير المسافة تُلغى حالة التحقق
+            السابقة، وتحتاج إلى إعادة مطابقة المرجع. المسافة المختارة تُسجّل مع كل سجل.
+            <br /><br />
+            <b>تنبيه:</b> ظهور «تم حفظ الضبط محلياً» يعني أن قيمة يدوية حُفظت في المتصفح، وليس أنه
+            تحقق فيزيائي مستقل. التحقق يبقى مسؤوليتك أنت بعد مطابقة البطاقة/المسطرة على الشاشة.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note note--danger" style="margin-top:18px">
+      <span class="note__icon">×</span>
+      <div>
+        <strong>ثلاث معلومات قديمة لا تنطبق على هذه النسخة:</strong>
+        لا يوجد «كود 88» ولا زر إحالة تلقائية للطفل غير المتعاون؛ أسئلة ما قبل الفحص
+        <b>تُحفظ ولا تغيّر القرار الآلي حاليًا</b>؛ والمعايرة الافتراضية ليست معايرة. التفاصيل في
+        <a href="#limits">قسم الدقة والحدود</a>.
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="steps">
+    <div class="section-head">
+      <span class="kicker">المسار العملي</span>
+      <h2>أربع خطوات، بالترتيب <span class="muted">— كما تظهر على الشاشة</span></h2>
+      <p class="section__lead">
+        الشريط العلوي يعرض الخطوات بأسمائها المختصرة: <b>التلميذ ← النظر ← صورة العين ← النتيجة</b>.
+        التسلسل الافتراضي في هذه النسخة: <b>ورقي (6m) ← رقمي (2m/3m) ← صورة العين ← النتيجة</b>.
+        كل خطوة تقفل ما بعدها حتى تُكتمل، لذلك لا تحاول القفز بين المحطات.
+      </p>
+    </div>
+
+    <div class="steps">
+      <!-- STEP 1 -->
+      <article class="step" id="step-1">
+        <div class="step__body">
+          <div class="step__head">
+            <div class="step__num">01</div>
+            <div>
+              <h3>التلميذ والفحص الورقي</h3>
+              <div class="step__sub">Registration &amp; paper station · 6m</div>
+            </div>
+          </div>
+          <p>
+            هذه الخطوة تجمع الهوية والموافقة والفرز القبلي، ثم تسجّل نتيجة اللوحة الورقية.
+            لا تنتقل إلى الرقمي قبل إكمال العينين الورقيتين وتشغيل المؤقت.
+          </p>
+          <ol class="do-list">
+            <li><b>افتح «بيانات المدرسة والفاحص الثابتة»</b> وأدخل اسم المدرسة، قطاع المدرسة، كود الفاحص، والمركز الصحي. تبقى هذه البيانات للجلسة/اليوم وتُستخدم تلقائيًا في السجلات التالية.</li>
+            <li><b>أدخل كود التلميذ:</b> يدويًا، أو «كود تلقائي»، أو «مسح QR». راجع الحقول التي ملأها QR قبل المتابعة.</li>
+            <li><b>اختر الصف</b>؛ يتحدد العمر تلقائيًا (الأول 6 سنوات ... السادس 11 سنة). ثم اختر الجنس والنظارة.</li>
+            <li><b>أكّد الموافقة:</b> «موجودة وموقعة» مطلوبة. التطبيق لا يبدأ بسجل بدون موافقة مؤكدة.</li>
+            <li><b>أجب عن سؤال الفرز القبلي:</b> «هل لدى الطفل سكري أو ألم بالعين أو شكوى من الأهل؟». عند «نعم» تظهر أسئلة الموافقة/الألم/قلق ولي الأمر؛ سجّلها بصدق.</li>
+            <li><b>في محطة الورقي:</b> اضغط «بدء المؤقت» أولًا — هذا يفتح قائمتي العين اليمنى واليسرى. سجّل OD ثم OS من سلم 6/60 إلى 6/6، أو «أقل من 6/60» إذا تعذر التعرف على أكبر رمز.</li>
+            <li><b>أوقف المؤقت</b> بعد الانتهاء، وتأكد من وجود نتيجتين. ثم اضغط «متابعة إلى فحص البصر».</li>
+          </ol>
+          <div class="step__checks">
+            <strong>قبل المتابعة تأكد من:</strong>
+            <div class="mini-checks">
+              <span class="mini-check">الموافقة مؤكدة</span>
+              <span class="mini-check">الصف والجنس والنظارة</span>
+              <span class="mini-check">OD وOS الورقيان</span>
+              <span class="mini-check">المؤقت يعمل ثم يتوقف</span>
+            </div>
+          </div>
+          <div class="note note--info" style="margin-top:14px">
+            <span class="note__icon">i</span>
+            <div><strong>الورقي للمقارنة لا للقرار.</strong> تُحفظ النتيجة الورقية وتُستخدم في مقارنة الاتفاق، لكن قرار الفرز الآلي في الخطوة 4 يعتمد على الفحص الرقمي وقياسات العين وأعراض الإجهاد — لا على درجة الورقي وحدها.</div>
+          </div>
+        </div>
+        <div class="step__visual">
+          <div class="phone-grid">
+            <figure class="figure">
+              <div class="phone"><img src="{{IMG:step1-registration.png}}" alt="لقطة حقيقية لشاشة تسجيل التلميذ" data-zoom /></div>
+              <figcaption class="caption"><b>1أ:</b> التسجيل والهوية</figcaption>
+            </figure>
+            <figure class="figure">
+              <div class="phone"><img src="{{IMG:step1-paper.png}}" alt="لقطة حقيقية لمحطة الفحص الورقي 6m" data-zoom /></div>
+              <figcaption class="caption"><b>1ب:</b> الورقي بعد بدء المؤقت</figcaption>
+            </figure>
+          </div>
+          <figure class="figure" style="margin-top:14px">
+            <div class="phone"><img src="{{IMG:step1-prescreen.png}}" alt="لقطة حقيقية لأسئلة الفرز القبلي" data-zoom /></div>
+            <figcaption class="caption"><b>1ج:</b> عند «نعم» تظهر أسئلة الفرز القبلي</figcaption>
+          </figure>
+        </div>
+      </article>
+
+      <!-- STEP 2 -->
+      <article class="step step--reverse" id="step-2">
+        <div class="step__body">
+          <div class="step__head">
+            <div class="step__num">02</div>
+            <div>
+              <h3>فحص النظر الرقمي</h3>
+              <div class="step__sub">Digital acuity · HOTV / Tumbling E</div>
+            </div>
+          </div>
+          <p>
+            يبدأ التطبيق بالعين اليمنى تلقائيًا. يختار رمز الاختبار حسب العمر/الصف:
+            <b>HOTV</b> للأطفال 5–8 سنوات أو الصفوف 1–3، و<b>حرف E المتقلب</b> للأكبر.
+            زر التبديل أعلى الشاشة يعرض الرمز الحالي ويُقفل بعد بدء الاختبار.
+          </p>
+          <ol class="do-list">
+            <li><b>جهّز الطفل قبل الدخول:</b> لا يوجد زر إيقاف مؤقت داخل الاختبار. اجلس الطفل على المسافة، وغطِّ العين غير المفحوصة ببطاقة نظيفة دون ضغط.</li>
+            <li><b>HOTV:</b> أعطِ الطفل بطاقة المطابقة الورقية (H O T V). أشر بإصبعه إلى الحرف المطابق، وأنت تضغط الحرف في شريط الاستجابة السفلي. لا تطلب منه نطق الحرف.</li>
+            <li><b>حرف E:</b> يوجّه الطفل إصبعه إلى اتجاه فتحة الحرف، وأنت تضغط السهم المقابل أو تسحب على الشاشة باتجاه الفتحة.</li>
+            <li><b>ثبّت المسافة:</b> لا تقترب أو تبعد بين المستويات. أبقِ الشاشة أمام الطفل في مستوى العين تقريبًا.</li>
+            <li><b>لا تساعد:</b> لا تعلّق على صحة الإجابة، ولا تشير إلى الزر الصحيح. التطبيق يعطي نغمة/اهتزازًا خفيفًا.</li>
+            <li><b>اترك المسار السريع يعمل:</b> إجابتان صحيحتان متتاليتان تنقلان للمستوى التالي، وإجابتان خاطئتان تُرجعان مستوى واحدًا. الانتقال المفاجئ من 6/60 إلى 6/12 ثم 6/6 مقصود.</li>
+            <li><b>انتقل تلقائيًا للعين اليسرى</b> بعد إنهاء اليمنى. عند اكتمال العينين تظهر النتيجتان وزر «الانتقال إلى فحص العين».</li>
+          </ol>
+          <div class="note note--warn" style="margin-top:14px">
+            <span class="note__icon">!</span>
+            <div><strong>لماذا تقفز الحروف؟</strong> هذا هو مسار <b>Fast-Track</b> لتقليل زمن الفحص وإرهاق الطفل: 6/60 ← 6/12 ← 6/6. إذا أخطأ الطفل يعود خطوة للخلف (6/18، 6/24...) بدل أن ينزل سطرًا بسطر. لا تعتبره خللًا ولا تعِد تشغيل الاختبار.</div>
+          </div>
+          <div class="step__checks">
+            <strong>قبل المتابعة تأكد من:</strong>
+            <div class="mini-checks">
+              <span class="mini-check">العين اليمنى اكتملت</span>
+              <span class="mini-check">العين اليسرى اكتملت</span>
+              <span class="mini-check">المسافة ثابتة</span>
+              <span class="mini-check">لا تلقين للإجابات</span>
+            </div>
+          </div>
+        </div>
+        <div class="step__visual">
+          <figure class="figure">
+            <div class="phone"><img src="{{IMG:step2-acuity.png}}" alt="لقطة حقيقية لشاشة فحص النظر الرقمي HOTV" data-zoom /></div>
+            <figcaption class="caption"><b>2أ:</b> HOTV — الحرف المعروض وشريط الاستجابة</figcaption>
+          </figure>
+          <div class="phone-grid" style="margin-top:14px">
+            <figure class="figure">
+              <div class="phone"><img src="{{IMG:step2-completed.png}}" alt="لقطة حقيقية لاكتمال فحص العينين" data-zoom /></div>
+              <figcaption class="caption"><b>2ب:</b> اكتمال العينين</figcaption>
+            </figure>
+            <figure class="figure">
+              <div class="phone"><img src="{{IMG:step2-tumbling-e.png}}" alt="لقطة حقيقية لشاشة حرف E المتقلب" data-zoom /></div>
+              <figcaption class="caption"><b>2ج:</b> حرف E للصفوف الأعلى</figcaption>
+            </figure>
+          </div>
+        </div>
+      </article>
+
+      <!-- STEP 3 -->
+      <article class="step" id="step-3">
+        <div class="step__body">
+          <div class="step__head">
+            <div class="step__num">03</div>
+            <div>
+              <h3>صورة العين والقياسات</h3>
+              <div class="step__sub">Ocular biometry · Hirschberg + MRD₁</div>
+            </div>
+          </div>
+          <p>
+            التقط صورة واضحة للعينين بإضاءة أمامية، ثم راجع التقدير الآلي. لا تُعتمد القيمة
+            إلا بعد تأكيد أن لها قياسًا فعليًا. هذه الخطوة تسجّل أيضًا مظهر العين الخارجي
+            وأعراض إجهاد العين.
+          </p>
+          <ol class="do-list">
+            <li><b>الإضاءة والوضعية:</b> اجعل الطفل ينظر للأمام، والضوء أمامه لا خلفه. ضع العينين داخل الإطار، وثبّت الرأس لحظة التصوير.</li>
+            <li><b>التقط أو ارفع صورة:</b> «التقاط وفحص تلقائي بالذكاء الاصطناعي» أو «رفع صورة». إن لم يظهر منعكس واضح، أعد التصوير أو استخدم الضبط اليدوي.</li>
+            <li><b>راجع Hirschberg:</b> القيمة الآلية تقديرية. إن كانت غير منطقية، افتح «تعديل يدوي للمختص» وأدخل القياس الفعلي (0–3 mm).</li>
+            <li><b>راجع MRD₁:</b> المسافة الهامشية للجفن (1–5.5 mm). القيمة الافتراضية ليست قياسًا حتى تؤكدها.</li>
+            <li><b>أكّد القياسين:</b> ضع علامة على «أؤكد أن القيمة من قياس فعلي وليست القيمة الافتراضية» لكل من Hirschberg وMRD₁. بدون التأكيدين لا يُحفظ السجل.</li>
+            <li><b>مظهر العين الخارجي:</b> «نعم (سليم)» أو «لا (توجد علامة)» مع اختيار العلامات (قشور/إفرازات/احمرار/عتامة).</li>
+            <li><b>أعراض الإجهاد الخمسة:</b> تضييق العينين للسبورة، إمالة الرأس، فرك العين/الاحمرار، تقريب الكتاب، صداع بعد القراءة. كل عرض = نقطة (0–5).</li>
+            <li><b>اضغط «عرض النتيجة والحفظ».</b></li>
+          </ol>
+          <div class="note note--danger" style="margin-top:14px">
+            <span class="note__icon">!</span>
+            <div><strong>الذكاء الاصطناعي هنا تقدير بصري بسيط.</strong> يعتمد على سطوع الصورة وموضع المنعكس، وليس نموذجًا سريريًا معتمدًا. لا تستخدم القيمة وحدها لتشخيص الحول أو الإطراق. راجع الصورة، وأعد القياس يدويًا عند الشك.</div>
+          </div>
+          <div class="step__checks">
+            <strong>قبل المتابعة تأكد من:</strong>
+            <div class="mini-checks">
+              <span class="mini-check">صورة واضحة</span>
+              <span class="mini-check">Hirschberg مؤكد</span>
+              <span class="mini-check">MRD₁ مؤكد</span>
+              <span class="mini-check">أعراض الإجهاد مسجلة</span>
+            </div>
+          </div>
+        </div>
+        <div class="step__visual">
+          <figure class="figure">
+            <div class="phone"><img src="{{IMG:step3-biometry.png}}" alt="لقطة حقيقية لشاشة صورة العين والقياسات" data-zoom /></div>
+            <figcaption class="caption"><b>3:</b> صورة العينين — الإطار والالتقاط</figcaption>
+          </figure>
+          <div class="note note--info" style="margin-top:14px">
+            <span class="note__icon">i</span>
+            <div><strong>Hirschberg ≈ 15Δ لكل 1 mm</strong> في تحويل التطبيق التقريبي. الناتج للفرز والمقارنة، وليس قياسًا تشخيصيًا دقيقًا.</div>
+          </div>
+        </div>
+      </article>
+
+      <!-- STEP 4 -->
+      <article class="step step--reverse" id="step-4">
+        <div class="step__body">
+          <div class="step__head">
+            <div class="step__num">04</div>
+            <div>
+              <h3>النتيجة وبطاقة ولي الأمر</h3>
+              <div class="step__sub">CDSS · nursing instructions &amp; parent card</div>
+            </div>
+          </div>
+          <p>
+            تعرض الشاشة قرار الفرز، وإرشادات التمريض، ومعاينة «السبورة» كما يراها الطفل
+            بضعف البصر. راجع النتيجة، نزّل بطاقة ولي الأمر عند الحاجة، ثم احفظ السجل.
+          </p>
+          <ol class="do-list">
+            <li><b>اقرأ شريط القرار:</b> «سليم» أو «يحتاج مراجعة» أو «إحالة عاجلة». القرار الآلي يعتمد على الفحص الرقمي وقياسات العين وأعراض الإجهاد؛ الورقي لا يدخل في حساب العتبة.</li>
+            <li><b>اتبع زمن الإرشادات المعروض:</b> سليم → إعادة فحص سنوية؛ مراجعة → مركز الصحة الأولية خلال أسبوعين؛ عاجل → طبيب خلال 48 ساعة (حسب صياغة التطبيق).</li>
+            <li><b>بطاقة ولي الأمر:</b> راجع معاينة السبورة، ثم «تحميل بطاقة ولي الأمر PNG». البطاقة توضيحية تقريبية وليست تشخيصًا.</li>
+            <li><b>أبلغ ولي الأمر بلغة واضحة</b> دون تشخيص أو وعود. وثّق أن النتيجة أُبلغت.</li>
+            <li><b>«حفظ والانتقال للتلميذ التالي»</b> يحفظ السجل محليًا ويبدأ سجلًا جديدًا بكود جديد.</li>
+          </ol>
+          <div class="note note--warn" style="margin-top:14px">
+            <span class="note__icon">!</span>
+            <div><strong>لا تقل «سليم» لطفل لم يتعاون.</strong> إذا رفض الطفل الفحص، لا تجبره ولا تسجّل نتيجة طبيعية. التطبيق الحالي لا يملك زر «غير قابل للفحص»؛ وثّق الحالة في السجل الورقي/البروتوكول وأحِل وفق سياسة المركز. راجع <a href="#scenario-4">السيناريو 4</a>.</div>
+          </div>
+        </div>
+        <div class="step__visual">
+          <figure class="figure">
+            <div class="phone"><img src="{{IMG:step4-result.png}}" alt="لقطة حقيقية لشاشة النتيجة وبطاقة ولي الأمر" data-zoom /></div>
+            <figcaption class="caption"><b>4:</b> القرار، إرشادات التمريض، وبطاقة ولي الأمر</figcaption>
+          </figure>
+        </div>
+      </article>
+    </div>
+
+    <div class="note note--info" style="margin-top:18px">
+      <span class="note__icon">i</span>
+      <div><strong>التسلسل بين المحطات:</strong> في هذه النسخة لا توجد واجهة لاختيار «رقمي أولًا». التسلسل الافتراضي ورقي ثم رقمي، ويُسجّل مع كل سجل. إذا كان بروتوكولك يطلب ترتيبًا مختلفًا، لا تعتمد على تغيير غير ظاهر في الواجهة؛ وثّق ذلك مع فريق الدراسة.</div>
+    </div>
+  </section>
+
+  <section class="section" id="scenarios">
+    <div class="section-head">
+      <span class="kicker">من الميدان</span>
+      <h2>ستة مواقف ستواجهك <span class="muted">— وماذا تفعل بالضبط</span></h2>
+      <p class="section__lead">
+        هذه السيناريوهات مدمجة من دليل السيناريوهات والتدريب التفاعلي، مع تصحيح ما لا يطابق
+        النسخة الحالية من التطبيق. افتح كل بطاقة لقراءة القاعدة، وخطوات التطبيق، والعبارة التدريبية.
+      </p>
+    </div>
+
+    <div class="scenarios">
+      <details class="scenario" id="scenario-1">
+        <summary>
+          <span class="scenario__num">01</span>
+          <span>
+            <span class="scenario__title">طفل في الصف الأول أو الثاني (6–7 سنوات)</span>
+            <span class="scenario__hint">HOTV · لا نطق · بطاقة مطابقة</span>
+          </span>
+        </summary>
+        <div class="scenario__body">
+          <div class="scenario__row">
+            <div class="scenario__label">القاعدة</div>
+            <p>الأطفال 5–8 سنوات لا يُطلب منهم نطق الحروف. استخدم مطابقة HOTV مع بطاقة في حجر الطفل، ويشير هو إلى الحرف المطابق.</p>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">في التطبيق</div>
+            <ul>
+              <li>اختر الصف الأول؛ سيولد العمر 6 سنوات، ويُختار <b>HOTV</b> تلقائيًا.</li>
+              <li>أعطِ الطفل بطاقة HOTV ورقية. لا تطلب منه أن يقول «هذا حرف H».</li>
+              <li>اضغط أنت الحرف الذي يشير إليه على شريط الاستجابة السفلي.</li>
+              <li>لا تعلّق على الإجابة، ولا تسحب الشاشة بعيدًا عن مستوى نظره.</li>
+            </ul>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">عبارة تدريبية</div>
+            <div class="script">«يا بطل، لا تقول لي اسم الحرف. أشر بإصبعك على الحرف نفسه الموجود على الشاشة في بطاقتك.»</div>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">تحذير</div>
+            <p>البطاقة الورقية ليست مطبوعة داخل التطبيق؛ جهّزها مسبقًا. بدونها سيتحول الاختبار إلى نطق/تخمين، وهذا يخالف قاعدة العمر.</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="scenario" id="scenario-2">
+        <summary>
+          <span class="scenario__num">02</span>
+          <span>
+            <span class="scenario__title">تلميذ في الصف الخامس (10 سنوات)</span>
+            <span class="scenario__hint">حرف E · اتجاه الفتحة</span>
+          </span>
+        </summary>
+        <div class="scenario__body">
+          <div class="scenario__row">
+            <div class="scenario__label">القاعدة</div>
+            <p>الأطفال الأكبر يستطيعون الإشارة إلى اتجاه فتحة حرف E. هذا يقلل الاعتماد على تسمية الحروف ويسمح بقياس الاتجاه.</p>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">في التطبيق</div>
+            <ul>
+              <li>اختر الصف الخامس؛ العمر 10 سنوات، ويُختار <b>حرف E</b> تلقائيًا.</li>
+              <li>أمسك الشاشة ثابتة على المسافة؛ لا تملها لتوضيح الاتجاه.</li>
+              <li>يضغط الفاحص السهم المطابق لفتحة E، أو يسحب على مساحة الحرف باتجاه الفتحة.</li>
+              <li>إن بدا الطفل مترددًا، أعد التوضيح بمثال واحد قبل بدء المؤقت — لا أثناء التسجيل.</li>
+            </ul>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">عبارة تدريبية</div>
+            <div class="script">«فتحة الحرف E وين تتجه؟ أشر بإصبعك مثل فم التمساح: يمين، يسار، فوق، تحت.»</div>
+          </div>
+        </div>
+      </details>
+
+      <details class="scenario" id="scenario-3">
+        <summary>
+          <span class="scenario__num">03</span>
+          <span>
+            <span class="scenario__title">التطبيق يقفز من حرف كبير جدًا إلى حرف صغير</span>
+            <span class="scenario__hint">Fast-Track · ليس خللًا</span>
+          </span>
+        </summary>
+        <div class="scenario__body">
+          <div class="scenario__row">
+            <div class="scenario__label">القاعدة</div>
+            <p>لتقليل زمن الفحص المدرسي وإرهاق الطفل، يستخدم التطبيق مسارًا سريعًا: يبدأ 6/60، ثم يقفز إلى 6/12، ثم إلى 6/6 عند النجاح. عند الخطأ يعود مستوى واحدًا للخلف.</p>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">في التطبيق</div>
+            <ul>
+              <li>إجابتان صحيحتان متتاليتان = انتقال للمستوى التالي.</li>
+              <li>إجابتان خاطئتان = رجوع مستوى واحد (إلا عند 6/60 فتسجل «أقل من 6/60»).</li>
+              <li>المؤشر «خطوة 1/8» يوضح موقعك في السلم، وليس عدد الأطفال.</li>
+              <li>لا تعد تشغيل الاختبار إذا رأيت القفزة؛ هذا سلوك مقصود.</li>
+            </ul>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">عبارة تدريبية</div>
+            <div class="script">«لا تنصدم إذا صغر الحرف فجأة. هذا مسار سريع مبرمج حتى نوفر وقت الفحص ونريح عيون الطفل.»</div>
+          </div>
+        </div>
+      </details>
+
+      <details class="scenario" id="scenario-4">
+        <summary>
+          <span class="scenario__num">04</span>
+          <span>
+            <span class="scenario__title">الطفل خائف، يبكي، ويرفض الفحص</span>
+            <span class="scenario__hint">لا كود 88 · لا إجبار · لا «سليم»</span>
+          </span>
+        </summary>
+        <div class="scenario__body">
+          <div class="scenario__row">
+            <div class="scenario__label">القاعدة</div>
+            <p>لا يُجبر الطفل على الفحص، ولا يُعاد للصف باعتباره سليمًا. حالة عدم التعاون تُوثّق وتُحال وفق البروتوكول المحلي.</p>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">الحقيقة في هذه النسخة</div>
+            <div class="note note--danger" style="margin:0">
+              <span class="note__icon">!</span>
+              <div><strong>لا يوجد كود 88 ولا زر Untestable تلقائي.</strong> أسئلة «موافقة الطفل على الفحص» موجودة في الفرز القبلي، لكنها لا تُنشئ إحالة آلية. لا تدّعِ أن التطبيق يفعل ذلك.</div>
+            </div>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">ما تفعله</div>
+            <ul>
+              <li>توقف، واطلب من ولي الأمر أو المعلم تهدئة الطفل. جرّب مرة أخرى بطريقة لعبية إن أمكن.</li>
+              <li>إذا استمر الرفض، لا تسجّل 6/6 ولا «أقل من 6/60» كأنها نتيجة قياس. أوقف السجل وأعد الطفل لولي الأمر.</li>
+              <li>وثّق «غير قادر على التعاون / Untestable» في سجل الدراسة الورقي أو نظام المتابعة، وأحِل للمركز الصحي حسب السياسة.</li>
+              <li>لا تحفظ سجلًا ناقصًا في التطبيق لمجرد إغلاق الشاشة؛ السجل يتطلب النتيجتين والقياسات.</li>
+            </ul>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">عبارة تدريبية</div>
+            <div class="script">«ما راح نجبرك. نرتاح شوية، وإذا حبيت نجرّب مرة ثانية. صحتك أهم من الفحص.»</div>
+          </div>
+        </div>
+      </details>
+
+      <details class="scenario" id="scenario-5">
+        <summary>
+          <span class="scenario__num">05</span>
+          <span>
+            <span class="scenario__title">الطفل يقرأ 6/6 لكنه يفرك عينه ويشكو من صداع</span>
+            <span class="scenario__hint">أعراض الإجهاد · مراجعة وليس تطمين</span>
+          </span>
+        </summary>
+        <div class="scenario__body">
+          <div class="scenario__row">
+            <div class="scenario__label">القاعدة</div>
+            <p>حدة البصر الطبيعية لا تستبعد مشكلة انكسارية كامنة أو إجهادًا بصريًا. الأعراض مهمة حتى مع 6/6.</p>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">في التطبيق</div>
+            <ul>
+              <li>في الخطوة 3، سجّل أعراض الإجهاد الخمسة بصدق: تضييق العينين، إمالة الرأس، الفرك/الاحمرار، تقريب الكتاب، الصداع بعد القراءة.</li>
+              <li>عرضان أو أكثر (Score ≥ 2) يرفعان قرار الفرز إلى «يحتاج مراجعة» وفق قواعد النموذج.</li>
+              <li>أما سؤال «سكري/ألم/شكوى الأهل» في الخطوة 1 وعلامات العين الخارجية، فتُحفظ ولا تغيّر القرار الآلي حاليًا؛ لا تعتمد عليها وحدها.</li>
+            </ul>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">عبارة تدريبية</div>
+            <div class="script">«نظرك 6/6، بس الفرك والصداع علامات تستاهل مراجعة. راح نسجّلها ونعطيك بطاقة توضح لولي أمرك.»</div>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">تحذير</div>
+            <p>لا تقل «نظرك ممتاز، ما تحتاج طبيب» بناءً على 6/6 وحدها. القرار النهائي وفق البروتوكول والتقييم السريري.</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="scenario" id="scenario-6">
+        <summary>
+          <span class="scenario__num">06</span>
+          <span>
+            <span class="scenario__title">جهاز جديد أو شاشة تغيّر سطوعها</span>
+            <span class="scenario__hint">أعد المعايرة قبل أي قياس</span>
+          </span>
+        </summary>
+        <div class="scenario__body">
+          <div class="scenario__row">
+            <div class="scenario__label">القاعدة</div>
+            <p>حجم الرمز بالبكسل لا يعني شيئًا إذا تغيرت كثافة الشاشة أو السطوع أو المسافة. المعايرة مرتبطة بالجهاز والإعدادات.</p>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">في التطبيق</div>
+            <ul>
+              <li>افتح لوحة المشرف ← المعايرة، وأعد مطابقة المرجع المادي.</li>
+              <li>عند تغيير 2m إلى 3m تُلغى حالة التحقق؛ أعد المطابقة ثم ابدأ سجلًا جديدًا.</li>
+              <li>بعد المطابقة الفعلية اضبط العرض؛ تظهر «تم حفظ الضبط محلياً» بدل «ضبط تقديري غير متحقق». لا تجعل الشارة الخضراء بديلًا عن التحقق بالمسطرة.</li>
+              <li>لا تعتمد على إعداد محفوظ من جهاز آخر؛ لكل جهاز معايرته.</li>
+            </ul>
+          </div>
+          <div class="scenario__row">
+            <div class="scenario__label">عبارة تدريبية</div>
+            <div class="script">«غيّرنا الجهاز؟ نوقف دقيقة ونعاير من جديد. دقة الحرف أهم من سرعة البدء.»</div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section class="section" id="limits">
+    <div class="section-head">
+      <span class="kicker">الشفافية قبل الأرقام</span>
+      <h2>الدقة والحدود: ما لا يجب أن تدّعيه</h2>
+      <p class="section__lead">
+        هذه المنظومة تدعم تسجيل فحص أولي وإدارة بيانات دراسة. ليست جهازًا تشخيصيًا، وليست
+        معتمدة من منظمة الصحة العالمية، ولا تغني عن الطبيب. اقرأ هذه الحدود قبل تدريب الطلبة.
+      </p>
+    </div>
+
+    <div class="limits">
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>الذكاء الاصطناعي لصورة العين</h3></div>
+        <p>تقدير بسيط لسطوع الصورة وموضع المنعكس، وليس نموذجًا سريريًا مُدربًا أو معتمدًا. <b>راجع القيمة وأكّدها يدويًا.</b></p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>عتبات القرار</h3></div>
+        <p>قواعد نموذجية داخل التطبيق (Hirschberg ≥ 1 mm، MRD₁ &lt; 2.5 mm، حدة ≤ 6/36...) وليست مطابقة كاملة لدليل WHO أو توصية عالمية.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>كود 88 / Untestable</h3></div>
+        <p><b>غير موجود.</b> لا يوجد زر إحالة تلقائية للطفل الرافض. لا تجبره، ولا تسجّله سليمًا؛ وثّق وأحِل وفق البروتوكول.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>أسئلة ما قبل الفحص</h3></div>
+        <p>تُحفظ مع السجل (السكري/الألم/قلق الأهل/موافقة الطفل) لكنها <b>لا تغيّر قرار الفرز الآلي حاليًا</b>. لا تدّعِ غير ذلك.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>علامات العين الخارجية</h3></div>
+        <p>تُحفظ (قشور/إفرازات/احمرار/عتامة) لكنها لا تدخل في حساب القرار الآلي. التقييم السريري يظل ضروريًا.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>المعايرة الافتراضية</h3></div>
+        <p>القيمة الأولية تقديرية. لا تُعدّ الشاشة معايرة حتى تطابق المرجع المادي على الجهاز نفسه. تغيير المسافة أو الجهاز يلغي التحقق.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>سلم الحدة الرقمي</h3></div>
+        <p>ثمانية مستويات، حرف واحد لكل مستوى، وقاعدة إجابتين صحيحتين/خاطئتين. هذا <b>فرز سريع</b> وليس اختبار ETDRS كاملًا ولا يقيس كل درجات الحدة.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>البيانات والتشفير</h3></div>
+        <p>تُخزّن السجلات في <span class="mono">localStorage</span> داخل المتصفح دون تشفير تطبيقي، ولا توجد مزامنة سحابية. احمِ الجهاز وصدّر نسخة احتياطية.</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>العمل دون اتصال</h3></div>
+        <p>بعد أول تحميل ناجح، يخزّن Service Worker واجهة التطبيق للعمل دون اتصال. أول زيارة تحتاج الإنترنت، والكاميرا تحتاج إذنًا وسياقًا آمنًا (HTTPS أو localhost).</p>
+      </div>
+      <div class="limit">
+        <div class="limit__head"><span class="limit__icon">!</span><h3>الإحالة والتوقيت</h3></div>
+        <p>نصوص «أسبوعين / 48 ساعة» هي صياغة التطبيق الإرشادية، وليست وصفة طبية. اتبع بروتوكول مركزك والجهة الصحية المسؤولة.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:30px 0 10px;font-size:19px">كيف يُحسب قرار الفرز؟</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>المستوى</th><th>الشرط في النسخة الحالية</th><th>المعنى العملي</th></tr>
+        </thead>
+        <tbody>
+          <tr class="row-priority">
+            <td><strong>إحالة عاجلة</strong><br /><span class="tag tag--danger">MODEL_PRIORITY</span></td>
+            <td>Hirschberg ≥ 1.0 mm <b>أو</b> MRD₁ &lt; 2.5 mm <b>أو</b> أسوأ عين ≤ 6/36 (LogMAR ≥ 0.80)</td>
+            <td>إشارة أولوية أعلى وفق قواعد النموذج؛ راجع القياس والبروتوكول المحلي.</td>
+          </tr>
+          <tr class="row-review">
+            <td><strong>يحتاج مراجعة</strong><br /><span class="tag tag--gold">MODEL_REVIEW</span></td>
+            <td>أسوأ عين ≤ 6/9.5 (LogMAR ≥ 0.20) <b>أو</b> فرق العينين ≥ 0.20 LogMAR <b>أو</b> أعراض الإجهاد ≥ 2 من 5</td>
+            <td>مراجعة مركز الصحة الأولية وفق صياغة التطبيق، مع توثيق المتابعة.</td>
+          </tr>
+          <tr class="row-pass">
+            <td><strong>لا إشارة</strong><br /><span class="tag tag--teal">MODEL_NO_FLAG</span></td>
+            <td>لا يتحقق أي شرط من الشروط أعلاه</td>
+            <td>غياب الإشارة لا يستبعد مشكلة بصرية ولا يغني عن التقييم عند وجود أعراض.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption" style="text-align:start;margin-top:8px">
+      الطريقة: <span class="mono">classifyClinicalDecision()</span> — تعتمد على <b>الفحص الرقمي</b> وHirschberg وMRD₁ وأعراض الإجهاد.
+      النتيجة الورقية لا تدخل في هذه العتبة. القيم حدود نموذجية وليست تشخيصًا.
+    </p>
+  </section>
+
+  <section class="section" id="data">
+    <div class="section-head">
+      <span class="kicker">البيانات والتسليم</span>
+      <h2>سجّل، صدّر، ثم احمِ الملف</h2>
+      <p class="section__lead">
+        كل سجل يحتوي هوية التلميذ، المحطتين، القياسات، القرار، وإرشادات المتابعة. البيانات تبقى
+        على الجهاز؛ التصدير هو مسؤوليتك قبل مسح السجلات أو تغيير المتصفح.
+      </p>
+    </div>
+
+    <div class="grid grid--2" style="align-items:start">
+      <div class="card card-pad">
+        <h3 style="margin:0 0 8px;font-size:17px">من لوحة المشرف</h3>
+        <ol class="do-list">
+          <li>افتح «لوحة المشرف والبيانات» ← «السجلات والإحصاء».</li>
+          <li>راجع عدد السجلات ومؤشرات الاتفاق/الحساسية/النوعية. تظهر <span class="mono">N/A</span> عند غياب المرجع الكافي — وهذا متوقع.</li>
+          <li><b>«تصدير ملف CSV»</b> لملف Excel/SPSS بترميز UTF-8 مع BOM.</li>
+          <li><b>«نسخة احتياطية JSON»</b> للنسخ الاحتياطي والاستيراد/الدمج لاحقًا.</li>
+          <li>لا تضغط «مسح السجلات» قبل تأكيد وجود نسخة احتياطية مقروءة.</li>
+        </ol>
+        <div class="note note--warn" style="margin-top:14px">
+          <span class="note__icon">!</span>
+          <div><strong>لا تشارك ملف السجلات الخام علنًا.</strong> هوية التلميذ كود فقط، لكن السجلات قد تكشف المدرسة والصف والتواريخ. احمِ الملف وفق متطلبات الجهة البحثية.</div>
+        </div>
+      </div>
+      <figure class="figure">
+        <div class="phone"><img src="{{IMG:admin-records.png}}" alt="لقطة حقيقية لشاشة السجلات والإحصاء" data-zoom /></div>
+        <figcaption class="caption"><b>لقطة حقيقية:</b> السجلات والإحصاء بعد حفظ سجل واحد.</figcaption>
+      </figure>
+    </div>
+
+    <div class="grid grid--3" style="margin-top:14px">
+      <div class="card card-pad"><h3 style="margin:0 0 6px;font-size:14px">CSV</h3><p style="color:var(--muted);font-size:12.5px;margin:0">للتحليل في Excel/SPSS. يحتوي أعمدة المحطتين والقياسات والقرار. راجع قاموس المتغيرات قبل التحليل.</p></div>
+      <div class="card card-pad"><h3 style="margin:0 0 6px;font-size:14px">JSON</h3><p style="color:var(--muted);font-size:12.5px;margin:0">نسخة كاملة للاسترجاع أو الدمج. استخدم «استيراد ودمج» بحذر، وتأكد من عدم تكرار الأكواد.</p></div>
+      <div class="card card-pad"><h3 style="margin:0 0 6px;font-size:14px">الاحتفاظ</h3><p style="color:var(--muted);font-size:12.5px;margin:0">المسح نهائي داخل المتصفح. صدّر أولًا، ثم امسح، ثم تحقق من الملف على جهاز آخر.</p></div>
+    </div>
+  </section>
+
+  <section class="section" id="faq">
+    <div class="section-head">
+      <span class="kicker">أسئلة متكررة</span>
+      <h2>أجوبة سريعة أثناء الميدان</h2>
+    </div>
+    <div class="faq-list">
+      <details class="faq"><summary>لماذا لا أستطيع اختيار نتيجة العين في المحطة الورقية؟</summary><div class="faq__body">قائمتا OD/OS مقفلتان حتى تضغط «بدء المؤقت». هذا يضمن تسجيل زمن المحطة. اضغط بدء المؤقت أولًا، ثم اختر النتيجة.</div></details>
+      <details class="faq"><summary>لماذا زر «متابعة إلى فحص البصر» معطّل؟</summary><div class="faq__body">يحتاج التطبيق: كود التلميذ، الموافقة المؤكدة، بيانات المدرسة والقطاع وكود الفاحص، الصف/العمر، الجنس، حالة النظارة، ثم نتيجتي الورقي بعد تشغيل المؤقت. راجع النص التوضيحي أعلى بطاقة التسجيل.</div></details>
+      <details class="faq"><summary>لماذا يبدأ الفحص الرقمي فورًا دون كود فاحص؟</summary><div class="faq__body">في هذه النسخة يُستخدم كود الفاحص الأساسي تلقائيًا لمحطة الرقمي، ويبدأ الاختبار بالعين اليمنى مباشرة لتقليل الخطوات. جهّز الطفل قبل الدخول؛ لا يوجد زر إيقاف مؤقت داخل الاختبار.</div></details>
+      <details class="faq"><summary>لماذا يقفز الحرف من 6/60 إلى 6/12 ثم 6/6؟</summary><div class="faq__body">هذا مسار Fast-Track المقصود: إجابتان صحيحتان تنقلان للمستوى التالي، وإجابتان خاطئتان ترجعان مستوى للخلف. ليس خطأً في التطبيق.</div></details>
+      <details class="faq"><summary>لماذا لا تظهر نتيجة «غير قابل للفحص» للطفل الرافض؟</summary><div class="faq__body">لأن هذه النسخة لا تحتوي كود 88 أو زر Untestable. لا تجبر الطفل ولا تسجّل نتيجة طبيعية؛ وثّق الحالة خارج التطبيق وأحِل وفق البروتوكول. هذه فجوة معروفة وموثقة في قسم الدقة والحدود.</div></details>
+      <details class="faq"><summary>لماذا النتيجة النهائية لا تستخدم درجة الورقي؟</summary><div class="faq__body">في هذه النسخة قرار الفرز الآلي يعتمد على الفحص الرقمي وHirschberg وMRD₁ وأعراض الإجهاد. الورقي يُحفظ للمقارنة والاتفاق، وليس للقرار الآلي. راجع جدول العتبات.</div></details>
+      <details class="faq"><summary>هل 3 أمتار مدعومة؟</summary><div class="faq__body">نعم. من لوحة المعايرة اختر 3.0 m، ثم أعد مطابقة المرجع المادي. يكبّر التطبيق الرموز هندسيًا بنسبة 1.5×، ويُسجّل مسافة الفحص مع السجل.</div></details>
+      <details class="faq"><summary>هل يعمل دون إنترنت؟</summary><div class="faq__body">بعد أول تحميل ناجح، يخزّن Service Worker الواجهة والملفات للعمل دون اتصال. أول زيارة تحتاج الإنترنت، والكاميرا تحتاج إذنًا وHTTPS/localhost. لا تعتمد على وضع الطيران قبل اختبار الجهاز فعليًا.</div></details>
+      <details class="faq"><summary>أين تُحفظ البيانات؟ وكيف أنقلها؟</summary><div class="faq__body">في <span class="mono">localStorage</span> داخل متصفح الجهاز، دون خادم أو مزامنة. من «السجلات والإحصاء» صدّر CSV أو JSON. تغيير المتصفح/الجهاز أو مسح بيانات الموقع قد يفقد السجلات.</div></details>
+      <details class="faq"><summary>هل يمكن الطباعة أو الحفظ PDF؟</summary><div class="faq__body">نعم. استخدم زر الطباعة أعلى الصفحة أو <span class="mono">Ctrl/Cmd + P</span>، واختر «حفظ كـ PDF». أضفنا أنماط طباعة تُخفي القوائم وتُظهر الروابط.</div></details>
+    </div>
+  </section>
+
+  <section class="download" id="download">
+    <div class="section">
+      <span class="kicker">التطبيق والتحميل</span>
+      <h2>افتحه على الهاتف، أو نزّله للعرض المحلي</h2>
+      <p class="section__lead">
+        الرابط المباشر هو الأسهل للطلبة: يعمل على الهاتف، ويمكن إضافته للشاشة الرئيسية. نسخة ZIP
+        مخصّصة للعرض على حاسوب أو للاحتفاظ بنسخة محلية من الواجهة.
+      </p>
+
+      <div class="download-grid">
+        <div class="download-card">
+          <span class="tag tag--teal">الأسهل للطلبة</span>
+          <h3>افتح التطبيق مباشرة</h3>
+          <p>افتح الرابط على Chrome/Edge، واسمح بالكاميرا عند الخطوة 3. بعد أول تحميل يمكن إضافته للشاشة الرئيسية.</p>
+          <div class="url-box"><a href="https://moustafaali-prog.github.io/al-basar-ai/">moustafaali-prog.github.io/al-basar-ai/</a></div>
+          <a class="btn btn--light" href="https://moustafaali-prog.github.io/al-basar-ai/">فتح التطبيق</a>
+        </div>
+
+        <div class="download-card">
+          <span class="tag tag--gold">للحاسوب والنسخة الاحتياطية</span>
+          <h3>حزمة التطبيق ZIP</h3>
+          <p>تحتوي على نسخة البناء الجاهزة ومشغّل ويندوز محلي. لا تفتح <span class="mono">index.html</span> مباشرة من داخل ZIP؛ استخدم المشغّل.</p>
+          <div class="url-box"><a href="https://github.com/moustafaali-prog/al-basar-ai/releases/latest/download/AlBasar-AI-Offline-v3.zip">github.com/moustafaali-prog/al-basar-ai/releases</a></div>
+          <a class="btn btn--outline-light" href="https://github.com/moustafaali-prog/al-basar-ai/releases/latest/download/AlBasar-AI-Offline-v3.zip">تنزيل ZIP</a>
+        </div>
+
+        <div class="download-card">
+          <span class="tag tag--blue">نسخة للقراءة والطباعة</span>
+          <h3>هذا الدليل PDF</h3>
+          <p>نسخة PDF من نفس الدليل، مناسبة للإرسال إلى الطلبة أو الطباعة. تعمل روابط التطبيق داخل النسخة الإلكترونية.</p>
+          <div class="url-box"><a href="https://moustafaali-prog.github.io/al-basar-ai/AlBasar-AI-Guide.pdf">moustafaali-prog.github.io/al-basar-ai/AlBasar-AI-Guide.pdf</a></div>
+          <a class="btn btn--outline-light" href="https://moustafaali-prog.github.io/al-basar-ai/AlBasar-AI-Guide.pdf">تنزيل PDF</a>
+        </div>
+      </div>
+
+      <div class="download-note">
+        <strong>تعليمات سريعة للطلبة:</strong> افتح رابط التطبيق ← اسمح بالكاميرا عند الحاجة ← من قائمة المتصفح اختر «إضافة إلى الشاشة الرئيسية» (أو «تثبيت التطبيق»).
+        لا يحتاج التطبيق إلى حساب أو تسجيل دخول. البيانات تبقى على جهازك.
+        <br /><br />
+        <strong>للمشرف:</strong> نزّل ZIP، فك الضغط، ثم شغّل <span class="mono">START-WINDOWS.bat</span> على ويندوز. سيفتح متصفحًا على خادم محلي.
+        بديل: أي خادم ملفات ثابت يقدّم مجلد <span class="mono">dist</span>. لا تفتح الملف مباشرة بنقر مزدوج.
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="footer-grid">
+    <div><strong>البصر AI</strong> · دليل ميداني وتدريبي · إصدار الدليل 1.0 — نوفمبر 2026</div>
+    <div>أداة فرز أولي وتعليم، وليست تشخيصًا طبيًا أو اعتمادًا من منظمة الصحة العالمية.</div>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="عرض مكبر للقطة">
+  <button class="lightbox__close" type="button" aria-label="إغلاق">×</button>
+  <img src="" alt="" />
+</div>
+
+<script>
+  // Reading progress
+  const progressBar = document.querySelector('#progress > span');
+  const updateProgress = () => {
+    const doc = document.documentElement;
+    const max = doc.scrollHeight - doc.clientHeight;
+    const value = max > 0 ? (doc.scrollTop / max) * 100 : 0;
+    progressBar.style.width = value.toFixed(2) + '%';
+  };
+  document.addEventListener('scroll', updateProgress, { passive: true });
+  updateProgress();
+
+  // Active nav link
+  const navLinks = [...document.querySelectorAll('.nav a')];
+  const sections = navLinks.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        navLinks.forEach(a => a.classList.toggle('is-active', a.getAttribute('href') === '#' + entry.target.id));
+      });
+    }, { rootMargin: '-20% 0px -70% 0px', threshold: 0 });
+    sections.forEach(section => observer.observe(section));
+  }
+
+  // Lightbox
+  const lightbox = document.getElementById('lightbox');
+  const lightboxImg = lightbox.querySelector('img');
+  const closeLightbox = () => {
+    lightbox.classList.remove('is-open');
+    lightboxImg.src = '';
+  };
+  document.querySelectorAll('[data-zoom]').forEach(img => {
+    img.addEventListener('click', () => {
+      lightboxImg.src = img.currentSrc || img.src;
+      lightboxImg.alt = img.alt || '';
+      lightbox.classList.add('is-open');
+    });
+  });
+  lightbox.addEventListener('click', (event) => {
+    if (event.target === lightbox || event.target.classList.contains('lightbox__close')) closeLightbox();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeLightbox();
+  });
+</script>
+</body>
+</html>

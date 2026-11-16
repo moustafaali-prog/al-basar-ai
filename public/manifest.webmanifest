@@ -1,0 +1,41 @@
+{
+  "id": "./",
+  "name": "منظومة البصر | Al-Basar",
+  "short_name": "البصر",
+  "description": "واجهة محلية لتسجيل نتائج الفحص الأولي للبصر المدرسي وإدارة بيانات المشروع البحثي.",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f3f7f8",
+  "theme_color": "#123c57",
+  "categories": ["medical", "education", "health"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
