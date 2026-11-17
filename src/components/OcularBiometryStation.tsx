@@ -19,6 +19,8 @@ import {
   ANALYSIS_HEIGHT,
   ANALYSIS_WIDTH,
   FALLBACK_HVID_PX,
+  QUALITY_MESSAGE_BLUR,
+  QUALITY_MESSAGE_GLARE,
   STANDARD_PEDIATRIC_HVID_MM,
   analyzeOcularFrame,
   computeMRD1FromLandmarks,
@@ -65,6 +67,11 @@ interface AuditPointSet {
   pupil: ImagePoint | null;
   reflex: ImagePoint | null;
   eyelid: ImagePoint | null;
+}
+
+interface OcularApplyResult {
+  applied: boolean;
+  mrdAvailable: boolean;
 }
 
 const EYE_FINDINGS = [
@@ -233,6 +240,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const hadRetakeRef = useRef(false);
+  const lidWarningShownRef = useRef(false);
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
@@ -311,11 +319,13 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     points: Record<EyeKey, AuditPointSet>,
     source: OcularFrameAnalysis,
     manual: boolean,
-  ): boolean => {
+  ): OcularApplyResult => {
     const od = toEyeLandmarks('OD', points.OD, source.landmarks.OD);
     const os = toEyeLandmarks('OS', points.OS, source.landmarks.OS);
 
-    if (od.offsetPx === null && os.offsetPx === null) return false;
+    if (od.offsetPx === null && os.offsetPx === null) {
+      return { applied: false, mrdAvailable: false };
+    }
 
     const net = computeNetHirschberg({ OD: od, OS: os }, source.mmPerPx);
     const mrdCandidates = [
@@ -323,23 +333,33 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       computeMRD1FromLandmarks(os, source.mmPerPx),
     ].filter((value): value is number => value !== null);
 
-    // A missing lid margin falls back to the local default; the examiner can
-    // still refine MRD₁ with the slider or by re-tapping the eyelid point.
-    const rawMrd1 = mrdCandidates.length > 0 ? Math.min(...mrdCandidates) : 4.0;
-    const validated = validateOcularRanges(net.hirschbergAsymMm, rawMrd1);
+    // MRD₁ is only committed when a lid margin was actually detected or tapped.
+    // Never fabricate a lid distance from a missing landmark.
+    const mrdAvailable = mrdCandidates.length > 0;
+    const validated = validateOcularRanges(
+      net.hirschbergAsymMm,
+      mrdAvailable ? Math.min(...mrdCandidates) : mrd1MM,
+    );
 
     setHirschbergMM(validated.hirschbergMM);
-    setMrd1MM(validated.mrd1MM);
     setHirschbergRecorded(true);
-    setMrd1Recorded(true);
+
+    if (mrdAvailable) {
+      setMrd1MM(validated.mrd1MM);
+      setMrd1Recorded(true);
+    } else if (!mrd1Recorded && !lidWarningShownRef.current) {
+      lidWarningShownRef.current = true;
+      notify('لم يتم تحديد حد الجفن العلوي — المس نقطة «حد الجفن» أو اضبط MRD₁ من الضبط اليدوي.', 'info');
+    }
+
     setAIQualityFlag(manual ? 3 : (hadRetakeRef.current ? 2 : 1));
 
     if (validated.issues.length > 0) {
       notify(validated.issues.join(' '), 'info');
     }
 
-    return true;
-  }, [notify, setAIQualityFlag, setHirschbergMM, setHirschbergRecorded, setMrd1MM, setMrd1Recorded]);
+    return { applied: true, mrdAvailable };
+  }, [mrd1MM, mrd1Recorded, notify, setAIQualityFlag, setHirschbergMM, setHirschbergRecorded, setMrd1MM, setMrd1Recorded]);
 
   const runAutoDetection = useCallback((
     image: HTMLImageElement | null = userImage,
@@ -361,9 +381,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
       // Quality gate: both checks run before any value is accepted.
       if (!skipQuality && (result.isBlurred || result.hasGlare)) {
-        const message = result.isBlurred
-          ? '⚠️ الصورة غير واضحة — يرجى إعادة التصوير بثبات.'
-          : '⚠️ يوجد وهج ضوئي قوي يغطي الحدقة — غيّر زاوية التصوير قليلاً.';
+        const message = result.isBlurred ? QUALITY_MESSAGE_BLUR : QUALITY_MESSAGE_GLARE;
         setQualityState(result.isBlurred ? 'blur' : 'glare');
         setQualityMessage(message);
         setAutoStatus('error');
@@ -377,9 +395,9 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
       setQualityState('clear');
       setQualityMessage('');
-      const applied = applyMetricsFromAudit(nextPoints, result, skipQuality);
+      const outcome = applyMetricsFromAudit(nextPoints, result, skipQuality);
 
-      if (!applied) {
+      if (!outcome.applied) {
         setAutoStatus('error');
         setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — اضغط على الصورة لتحديد النقاط يدوياً.');
         setHirschbergRecorded(false);
@@ -392,9 +410,11 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       setAutoStatus('done');
       setAutoMessage(skipQuality
         ? '⚡ تم تخطي الفحص التلقائي — اضبط النقاط يدوياً عند الحاجة.'
-        : hadRetakeRef.current
-          ? '✅ تم تحليل الصورة وإعادة ضبط القيم (محاولة ثانية).'
-          : '✅ تم تحليل الصورة تلقائياً واعتماد القيم. راجعها قبل المتابعة.');
+        : !outcome.mrdAvailable
+          ? '✅ تم حساب Hirschberg تلقائياً. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.'
+          : hadRetakeRef.current
+            ? '✅ تم تحليل الصورة وإعادة ضبط القيم (محاولة ثانية).'
+            : '✅ تم تحليل الصورة تلقائياً واعتماد القيم. راجعها قبل المتابعة.');
       notify('تم تحديث القياسات البصرية. راجع القيم قبل المتابعة.', 'success');
     } catch (error) {
       const message = error instanceof Error
@@ -430,6 +450,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setAIQualityFlag(0);
     setHirschbergRecorded(false);
     setMrd1Recorded(false);
+    lidWarningShownRef.current = false;
     window.setTimeout(() => runAutoDetection(image), 60);
   }, [runAutoDetection, setAIQualityFlag, setHirschbergRecorded, setMrd1Recorded]);
 
@@ -538,6 +559,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setAutoMessage('');
     setBypassAuto(false);
     hadRetakeRef.current = false;
+    lidWarningShownRef.current = false;
     setAIQualityFlag(0);
     setHirschbergRecorded(false);
     setMrd1Recorded(false);
@@ -555,12 +577,14 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     if (next) {
       const source = analysis ?? createFallbackAnalysis(userImage);
       if (!analysis) setAnalysis(source);
-      const applied = applyMetricsFromAudit(auditPoints, source, true);
-      if (applied) {
+      const outcome = applyMetricsFromAudit(auditPoints, source, true);
+      if (outcome.applied) {
         setQualityState('clear');
         setQualityMessage('');
         setAutoStatus('done');
-        setAutoMessage('⚡ تم تخطي الفحص التلقائي — المس الصورة لضبط نقاط الحدقة والانعكاس.');
+        setAutoMessage(outcome.mrdAvailable
+          ? '⚡ تم تخطي الفحص التلقائي — المس الصورة لضبط نقاط الحدقة والانعكاس.'
+          : '⚡ تم تخطي الفحص التلقائي — تم حساب Hirschberg، وحدد نقطة «حد الجفن» لإكمال MRD₁.');
       } else {
         setAutoStatus('idle');
         setAutoMessage('اختر نوع النقطة ثم المس الصورة لتحديدها يدوياً.');
@@ -603,14 +627,17 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     };
 
     setAuditPoints(nextPoints);
-    const applied = applyMetricsFromAudit(nextPoints, source, true);
+    const outcome = applyMetricsFromAudit(nextPoints, source, true);
 
-    if (applied) {
+    if (outcome.applied) {
       setBypassAuto(true);
       setQualityState('clear');
       setQualityMessage('');
       setAutoStatus('done');
-      setAutoMessage(`تم ضبط نقطة ${auditType === 'pupil' ? 'الحدقة' : auditType === 'reflex' ? 'الانعكاس' : 'الجفن'} يدوياً — AI_Quality_Flag = 3.`);
+      const pointLabel = auditType === 'pupil' ? 'الحدقة' : auditType === 'reflex' ? 'الانعكاس' : 'الجفن';
+      setAutoMessage(outcome.mrdAvailable
+        ? `تم ضبط نقطة ${pointLabel} يدوياً — AI_Quality_Flag = 3.`
+        : `تم ضبط نقطة ${pointLabel} يدوياً — AI_Quality_Flag = 3. حدد نقطة «حد الجفن» أو اضبط MRD₁ يدوياً.`);
     } else {
       setBypassAuto(true);
       setQualityState('clear');
@@ -651,7 +678,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   };
 
   const qualityBlocked = !bypassAuto && (qualityState === 'blur' || qualityState === 'glare');
-  const noExternalFindings = externalEyeScreened && externalEyeFindings.length === 0;
   const hasSuspicion = hirschbergRecorded && mrd1Recorded && (hirschbergMM >= 1.0 || mrd1MM < 2.5);
   const alignmentState = !hirschbergRecorded || !mrd1Recorded ? 'idle' : hasSuspicion ? 'warn' : 'pass';
   const prismDiopters = convertHirschbergToPrism(hirschbergMM);
@@ -662,23 +688,67 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       <g key={eye}>
         {points.pupil && (
           <g>
-            <line x1={points.pupil.x - 12} y1={points.pupil.y} x2={points.pupil.x + 12} y2={points.pupil.y} stroke="#ef4444" strokeWidth="2.5" />
-            <line x1={points.pupil.x} y1={points.pupil.y - 12} x2={points.pupil.x} y2={points.pupil.y + 12} stroke="#ef4444" strokeWidth="2.5" />
-            <circle cx={points.pupil.x} cy={points.pupil.y} r="5" fill="none" stroke="#ef4444" strokeWidth="1.5" />
-            <text x={points.pupil.x + 16} y={points.pupil.y - 12} fill="#fecaca" fontSize="12" fontWeight="800">
+            <line
+              x1={points.pupil.x - 12}
+              y1={points.pupil.y}
+              x2={points.pupil.x + 12}
+              y2={points.pupil.y}
+              stroke="#ef4444"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            <line
+              x1={points.pupil.x}
+              y1={points.pupil.y - 12}
+              x2={points.pupil.x}
+              y2={points.pupil.y + 12}
+              stroke="#ef4444"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            <circle
+              cx={points.pupil.x}
+              cy={points.pupil.y}
+              r="5"
+              fill="none"
+              stroke="#ef4444"
+              strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text x={points.pupil.x + 16} y={points.pupil.y - 12} fill="#fecaca" fontSize="12" fontWeight="800" stroke="#450a0a" strokeWidth="2.5" paintOrder="stroke">
               {eye}
             </text>
           </g>
         )}
         {points.reflex && (
           <g>
-            <circle cx={points.reflex.x} cy={points.reflex.y} r="8" fill="rgba(34,211,238,0.16)" stroke="#22d3ee" strokeWidth="2" />
+            <circle
+              cx={points.reflex.x}
+              cy={points.reflex.y}
+              r="8"
+              fill="rgba(34,211,238,0.16)"
+              stroke="#22d3ee"
+              strokeWidth="2"
+              vectorEffect="non-scaling-stroke"
+            />
             <circle cx={points.reflex.x} cy={points.reflex.y} r="2.7" fill="#22d3ee" />
           </g>
         )}
         {points.eyelid && (
           <g>
-            <line x1={points.eyelid.x - 11} y1={points.eyelid.y} x2={points.eyelid.x + 11} y2={points.eyelid.y} stroke="#fbbf24" strokeWidth="2" strokeDasharray="3 2" />
+            <line
+              x1={points.eyelid.x - 11}
+              y1={points.eyelid.y}
+              x2={points.eyelid.x + 11}
+              y2={points.eyelid.y}
+              stroke="#fbbf24"
+              strokeWidth="2"
+              strokeDasharray="3 2"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
             <circle cx={points.eyelid.x} cy={points.eyelid.y} r="2.6" fill="#fbbf24" />
           </g>
         )}
@@ -733,11 +803,22 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               </span>
             </>
           ) : userImage ? (
-            <div className="precision-frame" ref={previewRef} onPointerDown={handlePreviewPointerDown}>
-              <img src={userImage.src} alt="صورة العين الملتقطة للتحليل" />
+            <div
+              className="precision-frame"
+              ref={previewRef}
+              onPointerDown={handlePreviewPointerDown}
+              role="group"
+              aria-label="معاينة العين مع طبقة التدقيق البصري. المس الصورة لتعديل نقطة الحدقة أو الانعكاس أو حد الجفن."
+            >
+              <img src={userImage.src} alt="صورة العين الملتقطة للتحليل" draggable={false} />
               <svg className="precision-hud" viewBox={`0 0 ${ANALYSIS_WIDTH} ${ANALYSIS_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
                 {(['OD', 'OS'] as EyeKey[]).map(renderEyeAuditHud)}
               </svg>
+              {(bypassAuto || qualityBlocked) && (
+                <span className="precision-tap-hint" aria-hidden="true">
+                  المس الصورة لتعديل النقاط يدوياً
+                </span>
+              )}
             </div>
           ) : (
             <div className="capture-empty">

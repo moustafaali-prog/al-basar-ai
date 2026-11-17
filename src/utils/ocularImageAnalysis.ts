@@ -56,6 +56,13 @@ export const LAPLACIAN_VARIANCE_MIN = 0.0016;
 /** Minimum normalized luminance standard deviation (flat / washed-out frame guard). */
 export const CONTRAST_STD_MIN = 0.01;
 
+/**
+ * Canonical examiner-facing rejection copy.
+ * Kept in this module so the quality gate and the audit UI can never drift.
+ */
+export const QUALITY_MESSAGE_BLUR = '⚠️ الصورة غير واضحة أو مهتزة — يرجى إعادة التصوير بثبات.';
+export const QUALITY_MESSAGE_GLARE = '⚠️ يوجد انعكاس ضوئي (وهج) قوى يغطي الحدقة — غيّر زاوية التصوير.';
+
 /* ------------------------------------------------------------------ *
  * Types
  * ------------------------------------------------------------------ */
@@ -244,6 +251,260 @@ const insideEllipse = (x: number, y: number, roi: { cx: number; cy: number; rx: 
 
 const distance = (a: ImagePoint, b: ImagePoint): number => Math.hypot(a.x - b.x, a.y - b.y);
 
+const median = (values: number[]): number | null => {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+};
+
+interface DarkComponent {
+  area: number;
+  cx: number;
+  cy: number;
+}
+
+/**
+ * 8-connected component of dark pixels that contains the darkest pixel of the
+ * eye ROI. Isolating one component keeps eyelashes, brows and temple shadows
+ * from dragging the pupil centroid off the true pupil.
+ */
+const collectDarkComponent = (
+  map: Float32Array,
+  width: number,
+  height: number,
+  roi: { cx: number; cy: number; rx: number; ry: number },
+  threshold: number,
+  seedX: number,
+  seedY: number,
+): DarkComponent => {
+  const x0 = Math.max(0, roi.cx - roi.rx);
+  const x1 = Math.min(width - 1, roi.cx + roi.rx);
+  const y0 = Math.max(0, roi.cy - roi.ry);
+  const y1 = Math.min(height - 1, roi.cy + roi.ry);
+  const localWidth = x1 - x0 + 1;
+  const localHeight = y1 - y0 + 1;
+
+  if (
+    localWidth <= 0 || localHeight <= 0
+    || seedX < x0 || seedX > x1 || seedY < y0 || seedY > y1
+    || map[seedY * width + seedX] > threshold
+  ) {
+    return { area: 0, cx: seedX, cy: seedY };
+  }
+
+  const visited = new Uint8Array(localWidth * localHeight);
+  const queue = new Int32Array(localWidth * localHeight);
+  const start = (seedY - y0) * localWidth + (seedX - x0);
+  visited[start] = 1;
+  queue[0] = start;
+
+  let head = 0;
+  let tail = 1;
+  let area = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumWeight = 0;
+
+  while (head < tail) {
+    const localIndex = queue[head];
+    head += 1;
+    const x = x0 + (localIndex % localWidth);
+    const y = y0 + Math.floor(localIndex / localWidth);
+    const luminance = map[y * width + x];
+    const weight = Math.max(0.001, threshold - luminance);
+
+    area += 1;
+    sumX += x * weight;
+    sumY += y * weight;
+    sumWeight += weight;
+
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+        if (!insideEllipse(nx, ny, roi)) continue;
+        const neighborLocal = (ny - y0) * localWidth + (nx - x0);
+        if (visited[neighborLocal]) continue;
+        if (map[ny * width + nx] > threshold) continue;
+        visited[neighborLocal] = 1;
+        queue[tail] = neighborLocal;
+        tail += 1;
+      }
+    }
+  }
+
+  return area > 0
+    ? { area, cx: sumX / sumWeight, cy: sumY / sumWeight }
+    : { area: 0, cx: seedX, cy: seedY };
+};
+
+/**
+ * Horizontal visible iris diameter, averaged over several rows through the
+ * pupil. Each limbus edge is the strongest iris→sclera gradient, which is
+ * immune to the small specular reflex sitting inside the iris.
+ */
+const measureHvid = (
+  map: Float32Array,
+  width: number,
+  height: number,
+  roi: { cx: number; cy: number; rx: number; ry: number },
+  pupil: ImagePoint,
+  pupilRadiusPx: number,
+  minLum: number,
+  maxLum: number,
+): number | null => {
+  const dynamicRange = maxLum - minLum;
+  const minDistance = Math.max(6, pupilRadiusPx * 1.25);
+  const maxDistance = Math.min(roi.rx * 1.02, 88);
+  const samples: number[] = [];
+
+  // Robust iris level: median of an annulus just outside the pupil edge.
+  const irisSamples: number[] = [];
+  for (const dy of [-2, 0, 2]) {
+    const row = Math.round(pupil.y + dy);
+    if (row < 1 || row >= height - 1) continue;
+    for (const side of [-1, 1] as const) {
+      for (let d = pupilRadiusPx * 1.3; d <= pupilRadiusPx * 1.7; d += 1) {
+        const x = Math.round(pupil.x + side * d);
+        if (x < 1 || x >= width - 1) continue;
+        if (!insideEllipse(x, row, roi)) continue;
+        irisSamples.push(map[row * width + x]);
+      }
+    }
+  }
+  const irisLevel = median(irisSamples) ?? minLum + dynamicRange * 0.35;
+  const scleraLevel = Math.max(irisLevel + 0.05, maxLum);
+  const edgeMidpoint = (irisLevel + scleraLevel) / 2;
+
+  const findLimbus = (row: number, step: 1 | -1): number | null => {
+    let previous = map[row * width + Math.round(pupil.x + step * minDistance)];
+    for (let dist = minDistance + 1; dist <= maxDistance; dist += 1) {
+      const x = Math.round(pupil.x + step * dist);
+      if (x < 1 || x >= width - 1) break;
+      const value = map[row * width + x];
+      if (value >= edgeMidpoint && previous < edgeMidpoint) {
+        const next1 = map[row * width + x + step];
+        const next2 = map[row * width + x + step * 2];
+        if (next1 >= edgeMidpoint && next2 >= edgeMidpoint) {
+          // Sub-pixel linear interpolation across the blurred limbus step.
+          const t = (edgeMidpoint - previous) / Math.max(1e-6, value - previous);
+          return x - step + t * step;
+        }
+      }
+      previous = value;
+    }
+    return null;
+  };
+
+  for (const dy of [0, -2, 2, -4, 4]) {
+    const row = Math.round(pupil.y + dy);
+    if (row < 1 || row >= height - 1) continue;
+    const leftEdge = findLimbus(row, -1);
+    const rightEdge = findLimbus(row, 1);
+    if (leftEdge === null || rightEdge === null) continue;
+    const measured = rightEdge - leftEdge;
+    if (
+      measured >= Math.max(24, pupilRadiusPx * 1.8)
+      && measured <= Math.min(170, roi.rx * 2 * 0.98)
+    ) {
+      samples.push(measured);
+    }
+  }
+
+  return median(samples);
+};
+
+/**
+ * Purkinje (corneal light reflex) localization.
+ * The search is constrained to the iris disc so eyelid/sclera highlights can
+ * never be mistaken for the reflex, and the winning blob is refined with a
+ * luminance-weighted centroid for sub-pixel Hirschberg stability.
+ */
+const findCornealReflex = (
+  map: Float32Array,
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  roi: { cx: number; cy: number; rx: number; ry: number },
+  pupil: ImagePoint,
+  pupilRadiusPx: number,
+  hvidPx: number | null,
+  minLum: number,
+  maxLum: number,
+): ImagePoint | null => {
+  const dynamicRange = maxLum - minLum;
+  if (dynamicRange < 0.1) return null;
+
+  const irisRadius = Math.min(
+    roi.rx * 0.95,
+    Math.max((hvidPx ?? pupilRadiusPx * 2.4) / 2, pupilRadiusPx * 1.05),
+  );
+  // A 3 mm Hirschberg deviation is ≈ 24 analysis px; capping the search keeps
+  // sclera / limbus highlights out of the candidate set even for large pupils.
+  const searchRadius = Math.max(6, Math.min(irisRadius * 0.92, 34));
+  const searchRadiusSq = searchRadius * searchRadius;
+  const minSpecular = minLum + dynamicRange * 0.7;
+
+  let peakScore = -Infinity;
+  let peakX = pupil.x;
+  let peakY = pupil.y;
+  let peakLum = 0;
+
+  for (let y = Math.max(0, Math.floor(pupil.y - searchRadius)); y <= Math.min(height - 1, Math.ceil(pupil.y + searchRadius)); y += 1) {
+    for (let x = Math.max(0, Math.floor(pupil.x - searchRadius)); x <= Math.min(width - 1, Math.ceil(pupil.x + searchRadius)); x += 1) {
+      const dx = x - pupil.x;
+      const dy = y - pupil.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > searchRadiusSq) continue;
+
+      const luminance = map[y * width + x];
+      if (luminance < minSpecular) continue;
+
+      const index = (y * width + x) * 4;
+      const whiteness = Math.min(data[index], data[index + 1], data[index + 2]) / 255;
+      if (whiteness < 0.72) continue;
+
+      // Prefer the brightest, whitest pixel and only gently penalise distance
+      // so a physiologic kappa offset is not pulled back to the pupil centre.
+      const score = luminance + whiteness * 0.08 - (distanceSq / searchRadiusSq) * 0.03;
+      if (score > peakScore) {
+        peakScore = score;
+        peakX = x;
+        peakY = y;
+        peakLum = luminance;
+      }
+    }
+  }
+
+  if (!Number.isFinite(peakScore)) return null;
+
+  const refineThreshold = Math.max(minLum + dynamicRange * 0.6, peakLum * 0.72);
+  let sumWeight = 0;
+  let sumX = 0;
+  let sumY = 0;
+  const refineRadius = 4;
+
+  for (let y = Math.max(0, peakY - refineRadius); y <= Math.min(height - 1, peakY + refineRadius); y += 1) {
+    for (let x = Math.max(0, peakX - refineRadius); x <= Math.min(width - 1, peakX + refineRadius); x += 1) {
+      if (Math.hypot(x - peakX, y - peakY) > refineRadius + 0.5) continue;
+      const luminance = map[y * width + x];
+      if (luminance < refineThreshold) continue;
+      const weight = (luminance - refineThreshold + 0.02) ** 2;
+      sumWeight += weight;
+      sumX += x * weight;
+      sumY += y * weight;
+    }
+  }
+
+  return sumWeight > 0
+    ? { x: sumX / sumWeight, y: sumY / sumWeight }
+    : { x: peakX, y: peakY };
+};
+
+
 /* ------------------------------------------------------------------ *
  * Per-eye landmark detection
  * ------------------------------------------------------------------ */
@@ -257,12 +518,11 @@ const detectEyeLandmarks = (
 ): EyeLandmarks => {
   const roi = EYE_ROI[eye];
 
+  // --- Luminance extrema and the darkest-pixel seed -----------------------
   let minLum = 1;
   let maxLum = 0;
-  let minX: number = roi.cx;
-  let minY: number = roi.cy;
-  let maxX: number = roi.cx;
-  let maxY: number = roi.cy;
+  let seedX: number = roi.cx;
+  let seedY: number = roi.cy;
 
   for (let y = Math.max(0, roi.cy - roi.ry); y <= Math.min(height - 1, roi.cy + roi.ry); y += 1) {
     for (let x = Math.max(0, roi.cx - roi.rx); x <= Math.min(width - 1, roi.cx + roi.rx); x += 1) {
@@ -270,51 +530,40 @@ const detectEyeLandmarks = (
       const value = blurred[y * width + x];
       if (value < minLum) {
         minLum = value;
-        minX = x;
-        minY = y;
+        seedX = x;
+        seedY = y;
       }
-      if (value > maxLum) {
-        maxLum = value;
-        maxX = x;
-        maxY = y;
-      }
+      if (value > maxLum) maxLum = value;
     }
   }
 
   const dynamicRange = maxLum - minLum;
 
-  // --- Pupil: darkest connected region inside the eye ROI -----------------
+  // --- Pupil: one connected dark component containing the darkest pixel ---
   const darkThreshold = minLum + dynamicRange * 0.2;
-  let darkArea = 0;
-  let darkSumX = 0;
-  let darkSumY = 0;
-  for (let y = Math.max(0, roi.cy - roi.ry); y <= Math.min(height - 1, roi.cy + roi.ry); y += 1) {
-    for (let x = Math.max(0, roi.cx - roi.rx); x <= Math.min(width - 1, roi.cx + roi.rx); x += 1) {
-      if (!insideEllipse(x, y, roi)) continue;
-      if (blurred[y * width + x] <= darkThreshold) {
-        darkArea += 1;
-        darkSumX += x;
-        darkSumY += y;
-      }
-    }
-  }
-
-  const pupilDetected = darkArea >= 14;
+  const component = collectDarkComponent(blurred, width, height, roi, darkThreshold, seedX, seedY);
+  const pupilDetected = dynamicRange >= 0.06 && component.area >= 14;
   const pupil: ImagePoint | null = pupilDetected
-    ? { x: darkSumX / darkArea, y: darkSumY / darkArea }
-    : { x: minX, y: minY };
+    ? { x: component.cx, y: component.cy }
+    : null;
   const pupilRadiusPx = pupilDetected
-    ? Math.min(60, Math.max(3, Math.sqrt(darkArea / Math.PI)))
+    ? Math.min(60, Math.max(3, Math.sqrt(component.area / Math.PI)))
     : null;
 
-  // --- Corneal reflex (Purkinje): brightest point inside the eye ROI -------
-  const reflexDetected = dynamicRange > 0.12;
-  const reflex: ImagePoint | null = reflexDetected ? { x: maxX, y: maxY } : null;
+  // --- HVID first: it bounds the iris disc used for reflex localization ---
+  const hvidPx = pupilDetected && pupil && pupilRadiusPx
+    ? measureHvid(blurred, width, height, roi, pupil, pupilRadiusPx, minLum, maxLum)
+    : null;
+
+  // --- Corneal reflex (Purkinje): brightest specular blob inside the iris --
+  const reflex = pupilDetected && pupil && pupilRadiusPx
+    ? findCornealReflex(blurred, data, width, height, roi, pupil, pupilRadiusPx, hvidPx, minLum, maxLum)
+    : null;
 
   // --- Specular glare inside the pupil disc -------------------------------
   let pupilPixels = 0;
   let saturatedPixels = 0;
-  if (pupilRadiusPx) {
+  if (pupil && pupilRadiusPx) {
     const radius = pupilRadiusPx * 1.15;
     const radiusSq = radius * radius;
     for (let y = Math.max(0, Math.floor(pupil.y - radius)); y <= Math.min(height - 1, Math.ceil(pupil.y + radius)); y += 1) {
@@ -332,52 +581,28 @@ const detectEyeLandmarks = (
   }
   const saturatedPupilRatio = pupilPixels > 0 ? saturatedPixels / pupilPixels : 0;
 
-  // --- HVID measurement (horizontal visible iris diameter in pixels) -------
-  let hvidPx: number | null = null;
-  if (pupilDetected && pupilRadiusPx) {
-    const scleraThreshold = minLum + dynamicRange * 0.55;
-    const row = Math.round(pupil.y);
-    const leftLimit = Math.max(0, roi.cx - roi.rx);
-    const rightLimit = Math.min(width - 1, roi.cx + roi.rx);
-
-    const findEdge = (step: 1 | -1): number | null => {
-      let run = 0;
-      for (let x = Math.round(pupil.x); x >= leftLimit && x <= rightLimit; x += step) {
-        const value = blurred[row * width + x];
-        if (value >= scleraThreshold) {
-          run += 1;
-          if (run >= 3) return x;
-        } else {
-          run = 0;
-        }
-      }
-      return null;
-    };
-
-    const leftEdge = findEdge(-1);
-    const rightEdge = findEdge(1);
-    if (leftEdge !== null && rightEdge !== null) {
-      const measured = rightEdge - leftEdge;
-      if (measured >= 40 && measured <= 170) hvidPx = measured;
-    }
-  }
-
   // --- Upper lid margin for MRD₁ ------------------------------------------
   let upperLid: ImagePoint | null = null;
-  if (pupilDetected && pupilRadiusPx) {
-    const column = Math.round(pupil.x);
+  if (pupilDetected && pupil && pupilRadiusPx) {
     const start = Math.max(1, Math.round(pupil.y - pupilRadiusPx * 3.4));
     const end = Math.min(height - 2, Math.round(pupil.y - pupilRadiusPx * 0.35));
+    const columns = [-2, -1, 0, 1, 2]
+      .map((offset) => Math.round(pupil.x) + offset)
+      .filter((x) => x >= 1 && x < width - 1);
     let bestGradient = 0;
     let bestY = -1;
     for (let y = start; y <= end; y += 1) {
-      const gradient = Math.abs(blurred[(y + 1) * width + column] - blurred[(y - 1) * width + column]);
+      let gradient = 0;
+      for (const x of columns) {
+        gradient += Math.abs(blurred[(y + 1) * width + x] - blurred[(y - 1) * width + x]);
+      }
+      if (columns.length > 0) gradient /= columns.length;
       if (gradient > bestGradient) {
         bestGradient = gradient;
         bestY = y;
       }
     }
-    if (bestY > 0 && bestGradient >= 0.018) {
+    if (bestY > 0 && bestGradient >= 0.016) {
       upperLid = { x: pupil.x, y: bestY };
     }
   }
@@ -394,7 +619,7 @@ const detectEyeLandmarks = (
     hvidPx,
     hvidSource: hvidPx ? 'detected' : 'standard',
     saturatedPupilRatio,
-    pupilConfidence: pupilDetected ? Math.min(1, darkArea / 220) : 0,
+    pupilConfidence: pupilDetected ? Math.min(1, component.area / 220) : 0,
   };
 };
 

@@ -532,6 +532,7 @@ details.m3-details[open] > summary { border-bottom: 1px solid var(--m3-border); 
 
 /* ---------- Step 3: ocular ---------- */
 .ocular-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr); gap: 18px; align-items: start; }
+.registration-layout > *, .acuity-layout > *, .ocular-layout > *, .verdict-layout > * { min-width: 0; }
 .capture-stage {
   position: relative; overflow: hidden; border-radius: 20px; background: #0f172a;
   border: 1px solid #1e293b; min-height: 320px; display: flex; align-items: center; justify-content: center;
@@ -1490,6 +1491,9 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   background: #000;
   cursor: crosshair;
   touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .precision-frame img {
   position: absolute !important;
@@ -1506,6 +1510,25 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   width: 100%;
   height: 100%;
   z-index: 2;
+  pointer-events: none;
+}
+.precision-hud g {
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.92));
+}
+.precision-tap-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  z-index: 3;
+  transform: translateX(-50%);
+  padding: 5px 11px;
+  border: 1px solid rgba(248, 250, 252, 0.22);
+  border-radius: 999px;
+  background: rgba(8, 20, 36, 0.84);
+  color: #f8fafc;
+  font-size: 10.5px;
+  font-weight: 800;
+  white-space: nowrap;
   pointer-events: none;
 }
 .audit-tools {
@@ -1579,10 +1602,13 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   .m3-btn,
   .audit-tool,
   .external-gate-pass,
-  .external-gate-toggle {
+  .external-gate-toggle,
+  .external-gate-chip,
+  .clinical-preset,
+  .segmented__btn {
     min-height: 54px;
   }
-  .quality-banner__actions .m3-btn { min-height: 50px; }
+  .quality-banner__actions .m3-btn { min-height: 54px; }
   .precision-frame { min-height: 160px; }
 }
 
