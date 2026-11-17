@@ -7,18 +7,34 @@ import {
   ChevronDown,
   Eye,
   RefreshCw,
-  RotateCcw,
   ShieldCheck,
   Sliders,
   Sparkles,
   Sun,
   Upload,
+  Zap,
 } from 'lucide-react';
 import { convertHirschbergToPrism } from '../utils/acuityMath';
+import {
+  ANALYSIS_HEIGHT,
+  ANALYSIS_WIDTH,
+  FALLBACK_HVID_PX,
+  STANDARD_PEDIATRIC_HVID_MM,
+  analyzeOcularFrame,
+  computeMRD1FromLandmarks,
+  computeNetHirschberg,
+  eyeAtAnalysisPoint,
+  validateOcularRanges,
+  type EyeKey,
+  type EyeLandmarks,
+  type ImagePoint,
+  type OcularFrameAnalysis,
+} from '../utils/ocularImageAnalysis';
 import { useFeedback } from './FeedbackProvider';
 
-type EyeTarget = 'OD' | 'OS';
 type AutoStatus = 'idle' | 'scanning' | 'done' | 'error';
+type QualityState = 'idle' | 'clear' | 'blur' | 'glare';
+type AuditPointType = 'pupil' | 'reflex' | 'eyelid';
 
 interface OcularBiometryProps {
   hirschbergMM: number;
@@ -45,30 +61,34 @@ interface OcularBiometryProps {
   onProceedToCDSS: () => void;
 }
 
-const EYE_FINDINGS = [
-  { id: 'EYELID_CRUST_OR_PUS', label: 'قشور أو قيح على الجفن أو الرموش' },
-  { id: 'SCLERAL_REDNESS', label: 'احمرار أو آفة على بياض العين' },
-  { id: 'EYE_DISCHARGE', label: 'إفرازات مائية أو لزجة من العين' },
-  { id: 'CORNEAL_HAZINESS', label: 'غشاوة أو عتامة على القرنية' },
-  { id: 'EYE_MISALIGNMENT', label: 'العينان لا تنظران في الاتجاه نفسه' },
-  { id: 'OTHER', label: 'علامة أخرى' },
-];
+interface AuditPointSet {
+  pupil: ImagePoint | null;
+  reflex: ImagePoint | null;
+  eyelid: ImagePoint | null;
+}
 
-const EXTERNAL_SEVERITY: Record<string, 'amber' | 'red'> = {
-  EYELID_CRUST_OR_PUS: 'amber',
-  SCLERAL_REDNESS: 'red',
-  EYE_DISCHARGE: 'amber',
-  CORNEAL_HAZINESS: 'red',
-  EYE_MISALIGNMENT: 'red',
-  OTHER: 'amber',
-};
+const EYE_FINDINGS = [
+  { id: 'EYELID_CRUST_OR_PUS', short: 'إفرازات / قشور جفن', tone: 'warn' },
+  { id: 'SCLERAL_REDNESS', short: 'احمرار الصلبة', tone: 'urgent' },
+  { id: 'EYE_DISCHARGE', short: 'إفرازات عينية', tone: 'warn' },
+  { id: 'CORNEAL_HAZINESS', short: 'عتامة القرنية', tone: 'urgent' },
+  { id: 'EYE_MISALIGNMENT', short: 'انحراف ظاهر', tone: 'urgent' },
+  { id: 'OTHER', short: 'ملاحظة أخرى', tone: 'warn' },
+] as const;
+
+const EXTERNAL_GATE_IDS = [
+  'EYELID_CRUST_OR_PUS',
+  'EYE_DISCHARGE',
+  'SCLERAL_REDNESS',
+  'CORNEAL_HAZINESS',
+] as const;
 
 const ASTHENOPIA_SIGNS = [
-  { key: 'squint', label: 'تضييق العينين لرؤية السبورة' },
-  { key: 'tilt', label: 'إمالة الرأس أثناء النظر' },
-  { key: 'rub', label: 'فرك العين المتكرر أو الاحمرار' },
-  { key: 'close', label: 'تقريب الكتاب من الوجه' },
-  { key: 'headache', label: 'صداع بعد القراءة المدرسية' },
+  { key: 'squint', label: 'تغميض متكرر عند النظر للأمام' },
+  { key: 'tilt', label: 'إمالة الرأس بشكل ملحوظ' },
+  { key: 'rub', label: 'فرك العينين بكثرة' },
+  { key: 'close', label: 'الاقتراب كثيراً من الشاشة / اللوح' },
+  { key: 'headache', label: 'صداع أو إجهاد بصري بعد القراءة' },
 ] as const;
 
 interface ClinicalPreset {
@@ -81,16 +101,11 @@ interface ClinicalPreset {
   mrd1MM: number;
 }
 
-/**
- * Three field presets that mirror the model thresholds already enforced by
- * acuityMath. They only prefill the two validated fields; sliders remain
- * available for fine adjustment and every tap is recorded as manual entry (3).
- */
 const CLINICAL_PRESETS: ClinicalPreset[] = [
   {
     id: 'normal',
-    emoji: '🟢',
-    label: 'تمركز وجفن طبيعي',
+    emoji: '✅',
+    label: 'طبيعي مبدئياً',
     detail: 'Hirschberg < 0.5mm | MRD1 = 4.0mm',
     tone: 'pass',
     hirschbergMM: 0,
@@ -98,23 +113,99 @@ const CLINICAL_PRESETS: ClinicalPreset[] = [
   },
   {
     id: 'strabismus',
-    emoji: '🟡',
-    label: 'اشتباه حول',
-    detail: 'Hirschberg ≥ 1.0mm / ≥ 15Δ',
+    emoji: '⚠️',
+    label: 'اشتباه حَوَل',
+    detail: 'Hirschberg ≥ 1.0mm / ≥ 15PD',
     tone: 'warn',
     hirschbergMM: 1.0,
     mrd1MM: 4.0,
   },
   {
     id: 'ptosis',
-    emoji: '🔴',
-    label: 'اشتباه إطراق جفن',
+    emoji: '🚨',
+    label: 'اشتباه تدلي جفن',
     detail: 'MRD1 < 2.5mm',
     tone: 'urgent',
     hirschbergMM: 0,
     mrd1MM: 2.0,
   },
 ];
+
+const emptyAuditPoints = (): Record<EyeKey, AuditPointSet> => ({
+  OD: { pupil: null, reflex: null, eyelid: null },
+  OS: { pupil: null, reflex: null, eyelid: null },
+});
+
+const pointsFromAnalysis = (analysis: OcularFrameAnalysis): Record<EyeKey, AuditPointSet> => ({
+  OD: {
+    pupil: analysis.landmarks.OD.pupil,
+    reflex: analysis.landmarks.OD.reflex,
+    eyelid: analysis.landmarks.OD.upperLid,
+  },
+  OS: {
+    pupil: analysis.landmarks.OS.pupil,
+    reflex: analysis.landmarks.OS.reflex,
+    eyelid: analysis.landmarks.OS.upperLid,
+  },
+});
+
+/**
+ * Canvas detection can fail in extreme lighting or on a locked-down browser.
+ * The examiner must still be able to tap the two visible landmarks manually,
+ * so we provide a neutral HVID-scaled frame that the HUD can write into.
+ */
+const createFallbackAnalysis = (image: HTMLImageElement): OcularFrameAnalysis => {
+  const emptyLandmark = (eye: EyeKey): EyeLandmarks => ({
+    eye,
+    pupil: null,
+    reflex: null,
+    upperLid: null,
+    pupilRadiusPx: null,
+    offsetPx: null,
+    hvidPx: null,
+    hvidSource: 'standard',
+    saturatedPupilRatio: 0,
+    pupilConfidence: 0,
+  });
+
+  return {
+    landmarks: { OD: emptyLandmark('OD'), OS: emptyLandmark('OS') },
+    sharpness: 0,
+    contrast: 0,
+    isBlurred: false,
+    hasGlare: false,
+    glareRatio: 0,
+    mmPerPx: STANDARD_PEDIATRIC_HVID_MM / FALLBACK_HVID_PX,
+    transform: {
+      imgWidth: image.naturalWidth || ANALYSIS_WIDTH,
+      imgHeight: image.naturalHeight || ANALYSIS_HEIGHT,
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0,
+    },
+  };
+};
+
+const toEyeLandmarks = (
+  eye: EyeKey,
+  points: AuditPointSet,
+  base: EyeLandmarks,
+): EyeLandmarks => {
+  const offsetPx = points.pupil && points.reflex
+    ? Math.hypot(points.pupil.x - points.reflex.x, points.pupil.y - points.reflex.y)
+    : null;
+
+  return {
+    ...base,
+    eye,
+    pupil: points.pupil,
+    reflex: points.reflex,
+    upperLid: points.eyelid,
+    offsetPx,
+  };
+};
+
+const formatMM = (value: number): string => Number.isFinite(value) ? value.toFixed(2) : '—';
 
 export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   hirschbergMM,
@@ -133,7 +224,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   setAsthenopiaScore,
   externalEyeFindings,
   setExternalEyeFindings,
-  externalEyeOther,
   setExternalEyeOther,
   externalEyeScreened,
   setExternalEyeScreened,
@@ -141,6 +231,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 }) => {
   const { notify } = useFeedback();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const hadRetakeRef = useRef(false);
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
@@ -148,9 +240,16 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const [userImage, setUserImage] = useState<HTMLImageElement | null>(null);
   const [isShutterActive, setIsShutterActive] = useState(false);
+
   const [autoStatus, setAutoStatus] = useState<AutoStatus>('idle');
   const [autoMessage, setAutoMessage] = useState('');
-  const [activeEyeTarget, setActiveEyeTarget] = useState<EyeTarget>('OS');
+  const [qualityState, setQualityState] = useState<QualityState>('idle');
+  const [qualityMessage, setQualityMessage] = useState('');
+  const [bypassAuto, setBypassAuto] = useState(false);
+
+  const [analysis, setAnalysis] = useState<OcularFrameAnalysis | null>(null);
+  const [auditPoints, setAuditPoints] = useState<Record<EyeKey, AuditPointSet>>(emptyAuditPoints);
+  const [auditType, setAuditType] = useState<AuditPointType>('pupil');
 
   const [symptomSquint, setSymptomSquint] = useState(false);
   const [symptomTilt, setSymptomTilt] = useState(false);
@@ -158,23 +257,15 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const [symptomClose, setSymptomClose] = useState(false);
   const [symptomHeadache, setSymptomHeadache] = useState(false);
 
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  /** True once a second capture replaces an earlier image (AI_Quality_Flag = 2 Retake). */
-  const hadRetakeRef = useRef(false);
-  const [pinType, setPinType] = useState<'pupil' | 'reflex' | 'eyelid' | null>(null);
-  const [pupilPins, setPupilPins] = useState<Array<{x:number;y:number}>>([]);
-  const [reflexPins, setReflexPins] = useState<Array<{x:number;y:number}>>([]);
-  const [eyelidPins, setEyelidPins] = useState<Array<{x:number;y:number}>>([]);
-  const [autoDetectAnimating, setAutoDetectAnimating] = useState(false);
   const [externalEyeGateAbnormal, setExternalEyeGateAbnormal] = useState(false);
 
   useEffect(() => {
     let count = 0;
-    if (symptomSquint) count++;
-    if (symptomTilt) count++;
-    if (symptomRub) count++;
-    if (symptomClose) count++;
-    if (symptomHeadache) count++;
+    if (symptomSquint) count += 1;
+    if (symptomTilt) count += 1;
+    if (symptomRub) count += 1;
+    if (symptomClose) count += 1;
+    if (symptomHeadache) count += 1;
     setAsthenopiaScore(count);
   }, [symptomSquint, symptomTilt, symptomRub, symptomClose, symptomHeadache, setAsthenopiaScore]);
 
@@ -212,113 +303,154 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setCameraError('');
   }, []);
 
-  const runAutoDetection = useCallback((image: HTMLImageElement | null = userImage, targetEye: EyeTarget = activeEyeTarget) => {
+  /**
+   * Applies HVID-normalized geometry to the two validated ocular fields.
+   * The measured values are always clamped into the admissible pediatric range.
+   */
+  const applyMetricsFromAudit = useCallback((
+    points: Record<EyeKey, AuditPointSet>,
+    source: OcularFrameAnalysis,
+    manual: boolean,
+  ): boolean => {
+    const od = toEyeLandmarks('OD', points.OD, source.landmarks.OD);
+    const os = toEyeLandmarks('OS', points.OS, source.landmarks.OS);
+
+    if (od.offsetPx === null && os.offsetPx === null) return false;
+
+    const net = computeNetHirschberg({ OD: od, OS: os }, source.mmPerPx);
+    const mrdCandidates = [
+      computeMRD1FromLandmarks(od, source.mmPerPx),
+      computeMRD1FromLandmarks(os, source.mmPerPx),
+    ].filter((value): value is number => value !== null);
+
+    // A missing lid margin falls back to the local default; the examiner can
+    // still refine MRD₁ with the slider or by re-tapping the eyelid point.
+    const rawMrd1 = mrdCandidates.length > 0 ? Math.min(...mrdCandidates) : 4.0;
+    const validated = validateOcularRanges(net.hirschbergAsymMm, rawMrd1);
+
+    setHirschbergMM(validated.hirschbergMM);
+    setMrd1MM(validated.mrd1MM);
+    setHirschbergRecorded(true);
+    setMrd1Recorded(true);
+    setAIQualityFlag(manual ? 3 : (hadRetakeRef.current ? 2 : 1));
+
+    if (validated.issues.length > 0) {
+      notify(validated.issues.join(' '), 'info');
+    }
+
+    return true;
+  }, [notify, setAIQualityFlag, setHirschbergMM, setHirschbergRecorded, setMrd1MM, setMrd1Recorded]);
+
+  const runAutoDetection = useCallback((
+    image: HTMLImageElement | null = userImage,
+    skipQuality = false,
+  ) => {
     if (!image) {
-      notify('التقط صورة أو ارفع صورة أولاً لإجراء المسح الضوئي.', 'error');
+      notify('يرجى التقاط صورة أو اختيار صورة أولاً.', 'info');
       return;
     }
 
     setAutoStatus('scanning');
-
-    const sourceCanvas = document.createElement('canvas');
-    sourceCanvas.width = 600;
-    sourceCanvas.height = 220;
-    const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      setAutoStatus('error');
-      setAutoMessage('تعذر تجهيز الصورة للمسح.');
-      return;
-    }
-
-    const imageWidth = image.naturalWidth || image.width;
-    const imageHeight = image.naturalHeight || image.height;
-    const imageScale = Math.min(sourceCanvas.width / imageWidth, sourceCanvas.height / imageHeight);
-    const drawWidth = imageWidth * imageScale;
-    const drawHeight = imageHeight * imageScale;
-    ctx.drawImage(image, (sourceCanvas.width - drawWidth) / 2, (sourceCanvas.height - drawHeight) / 2, drawWidth, drawHeight);
-
-    // The alignment frame keeps both eyes near these normalized positions.
-    const centerX = targetEye === 'OS' ? 420 : 180;
-    const centerY = 110;
-    const imageData = ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
-    const data = imageData.data;
-
-    let maxLum = -1;
-    let minLum = 256;
-    let peakX = -1;
-    let peakY = -1;
-    let darkX = -1;
-    let darkY = -1;
-
-    const radiusX = 72;
-    const radiusY = 46;
-    for (let y = Math.max(0, Math.floor(centerY - radiusY)); y <= Math.min(sourceCanvas.height - 1, Math.ceil(centerY + radiusY)); y++) {
-      for (let x = Math.max(0, Math.floor(centerX - radiusX)); x <= Math.min(sourceCanvas.width - 1, Math.ceil(centerX + radiusX)); x++) {
-        const dx = x - centerX;
-        const dy = y - centerY;
-        if ((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY) > 1) continue;
-        const idx = (y * sourceCanvas.width + x) * 4;
-        const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-        if (lum > maxLum) {
-          maxLum = lum;
-          peakX = x;
-          peakY = y;
-        }
-        if (lum < minLum) {
-          minLum = lum;
-          darkX = x;
-          darkY = y;
-        }
-      }
-    }
-
-    if (peakX < 0 || darkX < 0 || maxLum < 130 || maxLum - minLum < 35) {
-      setAutoStatus('error');
-      setAutoMessage('لم يظهر منعكس ضوئي واضح. أعد التصوير بإضاءة أمامية، أو استخدم الضبط الدقيق.');
-      notify('لم يعثر المسح على منعكس واضح. أعد المحاولة أو أدخل القيمة يدوياً.', 'info');
-      return;
-    }
-
-    // Calibrated assumption kept from the existing model: 11.7 mm horizontal visible iris diameter.
-    const hvidPx = 60;
-    const pxPerMM = hvidPx / 11.7;
-    const deltaPx = Math.hypot(peakX - darkX, peakY - darkY);
-    const calculatedMM = +(deltaPx / pxPerMM).toFixed(2);
-    const clampedMM = Math.min(3.0, calculatedMM);
-
-    setHirschbergMM(clampedMM);
-    setHirschbergRecorded(true);
-    // A completed analysis also satisfies the MRD₁ documentation step; the
-    // examiner can still refine the value in the manual slider.
-    setMrd1Recorded(true);
-    setAIQualityFlag(hadRetakeRef.current ? 2 : 1);
-    setAutoStatus('done');
-    setAutoMessage(`تم استخراج المنعكس: ${clampedMM.toFixed(2)} مم (${Math.round(clampedMM * 15)}Δ). راجع القيمة وأكمل قياس MRD₁.`);
-    notify(`تم تقدير انحراف المنعكس آلياً: ${clampedMM.toFixed(2)} مم. راجع النتيجة قبل الاعتماد.`, 'success');
-  }, [activeEyeTarget, notify, setAIQualityFlag, setHirschbergMM, setHirschbergRecorded, userImage]);
-
-  const processLoadedImage = useCallback((img: HTMLImageElement) => {
-    setUserImage(img);
-    setAutoStatus('idle');
     setAutoMessage('');
-    window.setTimeout(() => runAutoDetection(img), 80);
-  }, [runAutoDetection]);
+
+    try {
+      const result = analyzeOcularFrame(image);
+      const nextPoints = pointsFromAnalysis(result);
+      setAnalysis(result);
+      setAuditPoints(nextPoints);
+
+      // Quality gate: both checks run before any value is accepted.
+      if (!skipQuality && (result.isBlurred || result.hasGlare)) {
+        const message = result.isBlurred
+          ? '⚠️ الصورة غير واضحة — يرجى إعادة التصوير بثبات.'
+          : '⚠️ يوجد وهج ضوئي قوي يغطي الحدقة — غيّر زاوية التصوير قليلاً.';
+        setQualityState(result.isBlurred ? 'blur' : 'glare');
+        setQualityMessage(message);
+        setAutoStatus('error');
+        setAutoMessage(message);
+        setHirschbergRecorded(false);
+        setMrd1Recorded(false);
+        setAIQualityFlag(0);
+        notify(message, 'error');
+        return;
+      }
+
+      setQualityState('clear');
+      setQualityMessage('');
+      const applied = applyMetricsFromAudit(nextPoints, result, skipQuality);
+
+      if (!applied) {
+        setAutoStatus('error');
+        setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — اضغط على الصورة لتحديد النقاط يدوياً.');
+        setHirschbergRecorded(false);
+        setMrd1Recorded(false);
+        setAIQualityFlag(0);
+        notify('استخدم التحديد اليدوي على الصورة لتحديد الحدقة والانعكاس.', 'info');
+        return;
+      }
+
+      setAutoStatus('done');
+      setAutoMessage(skipQuality
+        ? '⚡ تم تخطي الفحص التلقائي — اضبط النقاط يدوياً عند الحاجة.'
+        : hadRetakeRef.current
+          ? '✅ تم تحليل الصورة وإعادة ضبط القيم (محاولة ثانية).'
+          : '✅ تم تحليل الصورة تلقائياً واعتماد القيم. راجعها قبل المتابعة.');
+      notify('تم تحديث القياسات البصرية. راجع القيم قبل المتابعة.', 'success');
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'تعذر تحليل الصورة. حاول مرة أخرى أو استخدم التحديد اليدوي.';
+      setAutoStatus('error');
+      setAutoMessage(message);
+      setQualityState('idle');
+      setAnalysis(createFallbackAnalysis(image));
+      setAuditPoints(emptyAuditPoints());
+      setHirschbergRecorded(false);
+      setMrd1Recorded(false);
+      setAIQualityFlag(0);
+      notify(message, 'error');
+    }
+  }, [
+    applyMetricsFromAudit,
+    notify,
+    setAIQualityFlag,
+    setHirschbergRecorded,
+    setMrd1Recorded,
+    userImage,
+  ]);
+
+  const processLoadedImage = useCallback((image: HTMLImageElement) => {
+    setUserImage(image);
+    setAnalysis(null);
+    setAuditPoints(emptyAuditPoints());
+    setQualityState('idle');
+    setQualityMessage('');
+    setAutoStatus('scanning');
+    setAutoMessage('جارٍ تحليل جودة الصورة والنقاط التشريحية...');
+    setAIQualityFlag(0);
+    setHirschbergRecorded(false);
+    setMrd1Recorded(false);
+    window.setTimeout(() => runAutoDetection(image), 60);
+  }, [runAutoDetection, setAIQualityFlag, setHirschbergRecorded, setMrd1Recorded]);
 
   const startCamera = async (facing: 'user' | 'environment' = cameraFacingMode) => {
     if (cameraStarting) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      const message = 'لا يدعم هذا المتصفح فتح الكاميرا. استخدم رفع صورة محفوظة.';
+      const message = 'تعذر الوصول إلى الكاميرا على هذا المتصفح. استخدم زر رفع الصورة بدلاً منها.';
       setCameraError(message);
       notify(message, 'error');
       return;
     }
+
     if (videoRef.current?.srcObject) {
       const existing = videoRef.current.srcObject as MediaStream;
       existing.getTracks().forEach((track) => track.stop());
       videoRef.current.srcObject = null;
     }
+
     setCameraStarting(true);
     setCameraError('');
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -326,7 +458,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       const video = videoRef.current;
       if (!video) {
         stream.getTracks().forEach((track) => track.stop());
-        const message = 'تعذر تجهيز معاينة الكاميرا. أعد المحاولة أو ارفع صورة محفوظة.';
+        const message = 'تعذر تجهيز معاينة الكاميرا. استخدم زر رفع الصورة.';
         setCameraError(message);
         notify(message, 'error');
         return;
@@ -343,7 +475,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
         stream.getTracks().forEach((track) => track.stop());
         video.srcObject = null;
       }
-      const message = 'تعذر فتح الكاميرا. تحقق من إذن المتصفح، أو ارفع صورة محفوظة.';
+      const message = 'تعذر فتح الكاميرا. تحقق من الصلاحيات أو استخدم رفع الصورة.';
       setCameraError(message);
       notify(message, 'error');
     } finally {
@@ -354,9 +486,10 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const capturePhoto = () => {
     const video = videoRef.current;
     if (!video || !video.videoWidth) {
-      notify('انتظر ظهور صورة الكاميرا ثم أعد المحاولة.', 'info');
+      notify('انتظر ثانية حتى تبدأ معاينة الكاميرا.', 'info');
       return;
     }
+
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -367,16 +500,12 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     window.setTimeout(() => setIsShutterActive(false), 200);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const img = new Image();
-    img.src = canvas.toDataURL('image/png');
-    img.onload = () => {
+    const image = new Image();
+    image.src = canvas.toDataURL('image/png');
+    image.onload = () => {
       stopCamera();
       if (userImage) hadRetakeRef.current = true;
-      // Capture is a real examination event: both ocular fields become recorded
-      // immediately, then the automatic scan refines the Hirschberg value.
-      setHirschbergRecorded(true);
-      setMrd1Recorded(true);
-      processLoadedImage(img);
+      processLoadedImage(image);
     };
   };
 
@@ -387,16 +516,13 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
+      const image = new Image();
+      image.onload = () => {
         stopCamera();
         if (userImage) hadRetakeRef.current = true;
-        // Uploaded photo follows the same one-tap recording contract as capture.
-        setHirschbergRecorded(true);
-        setMrd1Recorded(true);
-        processLoadedImage(img);
+        processLoadedImage(image);
       };
-      img.src = e.target?.result as string;
+      image.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
@@ -404,11 +530,94 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const resetImage = () => {
     stopCamera();
     setUserImage(null);
+    setAnalysis(null);
+    setAuditPoints(emptyAuditPoints());
+    setQualityState('idle');
+    setQualityMessage('');
     setAutoStatus('idle');
     setAutoMessage('');
+    setBypassAuto(false);
     hadRetakeRef.current = false;
+    setAIQualityFlag(0);
     setHirschbergRecorded(false);
     setMrd1Recorded(false);
+  };
+
+  const handleBypassToggle = () => {
+    if (!userImage) {
+      notify('التقط صورة أولاً لتفعيل التحديد اليدوي.', 'info');
+      return;
+    }
+
+    const next = !bypassAuto;
+    setBypassAuto(next);
+
+    if (next) {
+      const source = analysis ?? createFallbackAnalysis(userImage);
+      if (!analysis) setAnalysis(source);
+      const applied = applyMetricsFromAudit(auditPoints, source, true);
+      if (applied) {
+        setQualityState('clear');
+        setQualityMessage('');
+        setAutoStatus('done');
+        setAutoMessage('⚡ تم تخطي الفحص التلقائي — المس الصورة لضبط نقاط الحدقة والانعكاس.');
+      } else {
+        setAutoStatus('idle');
+        setAutoMessage('اختر نوع النقطة ثم المس الصورة لتحديدها يدوياً.');
+      }
+      notify('تم تفعيل التحديد اليدوي. المس الصورة لضبط نقاط الحدقة والانعكاس.', 'info');
+      return;
+    }
+
+    // Turning bypass off re-runs the objective quality gate.
+    if (userImage) runAutoDetection(userImage, false);
+  };
+
+  const handlePreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!userImage) return;
+    const target = previewRef.current;
+    if (!target) return;
+
+    const source = analysis ?? createFallbackAnalysis(userImage);
+    if (!analysis) setAnalysis(source);
+
+    const rect = target.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const x = ((event.clientX - rect.left) / rect.width) * ANALYSIS_WIDTH;
+    const y = ((event.clientY - rect.top) / rect.height) * ANALYSIS_HEIGHT;
+    if (x < 0 || x > ANALYSIS_WIDTH || y < 0 || y > ANALYSIS_HEIGHT) return;
+
+    const eye = eyeAtAnalysisPoint({ x, y }) ?? (x < ANALYSIS_WIDTH / 2 ? 'OD' : 'OS');
+    const point: ImagePoint = {
+      x: Math.max(0, Math.min(ANALYSIS_WIDTH, x)),
+      y: Math.max(0, Math.min(ANALYSIS_HEIGHT, y)),
+    };
+
+    const nextPoints: Record<EyeKey, AuditPointSet> = {
+      ...auditPoints,
+      [eye]: {
+        ...auditPoints[eye],
+        [auditType]: point,
+      },
+    };
+
+    setAuditPoints(nextPoints);
+    const applied = applyMetricsFromAudit(nextPoints, source, true);
+
+    if (applied) {
+      setBypassAuto(true);
+      setQualityState('clear');
+      setQualityMessage('');
+      setAutoStatus('done');
+      setAutoMessage(`تم ضبط نقطة ${auditType === 'pupil' ? 'الحدقة' : auditType === 'reflex' ? 'الانعكاس' : 'الجفن'} يدوياً — AI_Quality_Flag = 3.`);
+    } else {
+      setBypassAuto(true);
+      setQualityState('clear');
+      setQualityMessage('');
+      setAutoStatus('idle');
+      setAutoMessage('تم تسجيل النقطة. حدد الآن النقطة الأخرى لنفس العين (الحدقة والانعكاس) لحساب Hirschberg.');
+    }
   };
 
   const toggleFinding = (id: string) => {
@@ -420,18 +629,17 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setExternalEyeFindings(
       externalEyeFindings.includes(id)
         ? externalEyeFindings.filter((item) => item !== id)
-        : [...externalEyeFindings, id]
+        : [...externalEyeFindings, id],
     );
   };
 
-  /** One tap fills both validated ocular fields and marks them recorded. */
   const applyClinicalPreset = (preset: ClinicalPreset) => {
     setHirschbergMM(preset.hirschbergMM);
     setMrd1MM(preset.mrd1MM);
     setHirschbergRecorded(true);
     setMrd1Recorded(true);
     setAIQualityFlag(3);
-    notify(`طُبّق التصنيف السريري: ${preset.label}. يمكنك الضبط الدقيق بالمنزلقات.`, 'success');
+    notify(`تم تطبيق الإعداد السريري: ${preset.label}. يمكنك تعديل القيم يدوياً إذا لزم.`, 'success');
   };
 
   const applyHealthyExternalEye = () => {
@@ -439,35 +647,44 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setExternalEyeFindings([]);
     setExternalEyeOther('');
     setExternalEyeScreened(true);
-    notify('سُجلت العين الخارجية سليمة. تابع إلى النتيجة.', 'success');
+    notify('تم تسجيل الفحص الخارجي كطبيعي. تابع إلى تحليل النتائج.', 'success');
   };
 
-  const handleStagePointerDown = (e: React.PointerEvent) => {
-    if (!stageRef.current || !userImage || cameraActive) return;
-    if (!pinType) return;
-    const rect = stageRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    const point = { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
-    if (pinType === 'pupil') setPupilPins(p => [...p, point]);
-    if (pinType === 'reflex') setReflexPins(p => [...p, point]);
-    if (pinType === 'eyelid') setEyelidPins(p => [...p, point]);
-  };
-
-  const handleAutoDetectPins = () => {
-    if (!userImage) { notify('التقط صورة أولاً.', 'error'); return; }
-    setAutoDetectAnimating(true);
-    setPupilPins([{x:0.35,y:0.5},{x:0.65,y:0.5}]);
-    setReflexPins([{x:0.38,y:0.48},{x:0.68,y:0.52}]);
-    setEyelidPins([{x:0.35,y:0.35},{x:0.65,y:0.35}]);
-    setTimeout(() => setAutoDetectAnimating(false), 900);
-    notify('تم وضع نقاط الكشف الذكي كمرجع.', 'success');
-  };
-
+  const qualityBlocked = !bypassAuto && (qualityState === 'blur' || qualityState === 'glare');
   const noExternalFindings = externalEyeScreened && externalEyeFindings.length === 0;
   const hasSuspicion = hirschbergRecorded && mrd1Recorded && (hirschbergMM >= 1.0 || mrd1MM < 2.5);
   const alignmentState = !hirschbergRecorded || !mrd1Recorded ? 'idle' : hasSuspicion ? 'warn' : 'pass';
   const prismDiopters = convertHirschbergToPrism(hirschbergMM);
+
+  const renderEyeAuditHud = (eye: EyeKey) => {
+    const points = auditPoints[eye];
+    return (
+      <g key={eye}>
+        {points.pupil && (
+          <g>
+            <line x1={points.pupil.x - 12} y1={points.pupil.y} x2={points.pupil.x + 12} y2={points.pupil.y} stroke="#ef4444" strokeWidth="2.5" />
+            <line x1={points.pupil.x} y1={points.pupil.y - 12} x2={points.pupil.x} y2={points.pupil.y + 12} stroke="#ef4444" strokeWidth="2.5" />
+            <circle cx={points.pupil.x} cy={points.pupil.y} r="5" fill="none" stroke="#ef4444" strokeWidth="1.5" />
+            <text x={points.pupil.x + 16} y={points.pupil.y - 12} fill="#fecaca" fontSize="12" fontWeight="800">
+              {eye}
+            </text>
+          </g>
+        )}
+        {points.reflex && (
+          <g>
+            <circle cx={points.reflex.x} cy={points.reflex.y} r="8" fill="rgba(34,211,238,0.16)" stroke="#22d3ee" strokeWidth="2" />
+            <circle cx={points.reflex.x} cy={points.reflex.y} r="2.7" fill="#22d3ee" />
+          </g>
+        )}
+        {points.eyelid && (
+          <g>
+            <line x1={points.eyelid.x - 11} y1={points.eyelid.y} x2={points.eyelid.x + 11} y2={points.eyelid.y} stroke="#fbbf24" strokeWidth="2" strokeDasharray="3 2" />
+            <circle cx={points.eyelid.x} cy={points.eyelid.y} r="2.6" fill="#fbbf24" />
+          </g>
+        )}
+      </g>
+    );
+  };
 
   return (
     <div className="ocular-layout">
@@ -476,14 +693,19 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <div>
             <h2 className="card-head__title">
               <Camera size={20} aria-hidden="true" />
-              صورة العينين
+              التصوير العيني الدقيق
             </h2>
-            <p className="card-head__sub">ضع عيني الطفل داخل الإطار والتقط صورة واحدة واضحة.</p>
+            <p className="card-head__sub">
+              تقييم الحدقة والانعكاس القرني وتدلي الجفن. تعمل كل الحسابات محلياً على الجهاز دون إنترنت.
+            </p>
           </div>
-          <span className="pill pill--primary"><Sun size={13} aria-hidden="true" /> إضاءة أمامية</span>
+          <span className="pill pill--primary">
+            <Sun size={13} aria-hidden="true" />
+            إضاءة موزعة
+          </span>
         </div>
 
-        <div className="capture-stage" ref={stageRef} onPointerDown={handleStagePointerDown}>
+        <div className="capture-stage">
           <video
             ref={videoRef}
             autoPlay
@@ -503,64 +725,35 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               </div>
               {isShutterActive && <div className="capture-shutter" />}
               <span className="capture-guide-label">
-                👁️ ضع عيني الطفل داخل الإطار على بُعد 1 متر
+                ضع وجه الطفل داخل الدائرتين — ابتعد 40–60 سم
               </span>
               <span className="capture-hint">
                 <CheckCircle2 size={14} aria-hidden="true" />
-                حافظ على استقامة الرأس والنظر للأمام
+                حافظ على ثبات الكاميرا وأزل الانعكاسات المباشرة
               </span>
             </>
           ) : userImage ? (
-            <>
-              <img src={userImage.src} alt="صورة عيني التلميذ الملتقطة" />
-              <div className="alignment-frame" aria-hidden="true">
-                <svg viewBox="0 0 600 300" preserveAspectRatio="none">
-                  <ellipse cx="210" cy="150" rx="98" ry="58" fill="none" stroke="#86efac" strokeWidth="2" strokeDasharray="7 5" />
-                  <ellipse cx="390" cy="150" rx="98" ry="58" fill="none" stroke="#86efac" strokeWidth="2" strokeDasharray="7 5" />
-                </svg>
-              </div>
-              <div className="absolute inset-0 pointer-events-none">
-                {pupilPins.map((p,i)=>(
-                  <div key={`pupil-${i}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{left:`${p.x*100}%`,top:`${p.y*100}%`}}>
-                    <div className="w-3 h-3 rounded-full border-2 border-[var(--m3-primary)] bg-[var(--m3-primary)]/20 shadow" />
-                    {autoDetectAnimating && <div className="absolute inset-0 rounded-full border-2 border-[var(--m3-primary)] animate-ping" />}
-                  </div>
-                ))}
-                {reflexPins.map((p,i)=>(
-                  <div key={`reflex-${i}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{left:`${p.x*100}%`,top:`${p.y*100}%`}}>
-                    <div className="w-2.5 h-2.5 rounded-full bg-[var(--m3-warn)] ring-2 ring-white shadow" />
-                  </div>
-                ))}
-                {eyelidPins.map((p,i)=>(
-                  <div key={`eyelid-${i}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{left:`${p.x*100}%`,top:`${p.y*100}%`}}>
-                    <div className="w-2.5 h-2.5 rounded-full bg-[var(--m3-urgent)] ring-2 ring-white shadow" />
-                  </div>
-                ))}
-              </div>
-              <span className="capture-hint">
-                <CheckCircle2 size={14} aria-hidden="true" />
-                صورة محفوظة · يمكنك إعادة المسح أو الضبط الدقيق
-              </span>
-            </>
+            <div className="precision-frame" ref={previewRef} onPointerDown={handlePreviewPointerDown}>
+              <img src={userImage.src} alt="صورة العين الملتقطة للتحليل" />
+              <svg className="precision-hud" viewBox={`0 0 ${ANALYSIS_WIDTH} ${ANALYSIS_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
+                {(['OD', 'OS'] as EyeKey[]).map(renderEyeAuditHud)}
+              </svg>
+            </div>
           ) : (
             <div className="capture-empty">
               {cameraStarting ? (
                 <>
                   <span className="capture-spinner" aria-hidden="true" />
                   <strong>جارٍ تشغيل الكاميرا…</strong>
-                  <span>اسمح للمتصفح بالوصول إلى الكاميرا</span>
+                  <span>انتظر لحظة حتى تظهر المعاينة.</span>
                 </>
               ) : (
                 <>
                   <Camera size={42} aria-hidden="true" />
-                  <strong>{cameraError ? 'لم تظهر صورة الكاميرا' : 'ابدأ بصورة واضحة للعينين'}</strong>
-                  <span>{cameraError || 'كاميرا الجهاز أو صورة محفوظة'}</span>
+                  <strong>{cameraError ? 'تعذر تشغيل الكاميرا' : 'جاهز لفحص العين'}</strong>
+                  <span>{cameraError || 'افتح الكاميرا أو ارفع صورة واضحة للعين.'}</span>
                   {cameraError && (
-                    <button
-                      type="button"
-                      className="m3-btn m3-btn--outline capture-retry"
-                      onClick={() => startCamera()}
-                    >
+                    <button type="button" className="m3-btn m3-btn--outline capture-retry" onClick={() => startCamera()}>
                       <RefreshCw size={15} aria-hidden="true" />
                       إعادة المحاولة
                     </button>
@@ -580,29 +773,114 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           >
             <Camera size={20} aria-hidden="true" />
             {cameraStarting
-              ? '⏳ جارٍ تشغيل الكاميرا…'
+              ? 'جارٍ تشغيل الكاميرا…'
               : cameraActive
-                ? '📸 التقاط وفحص تلقائي بالذكاء الاصطناعي'
-                : '📷 فتح الكاميرا ومعاينة العينين'}
+                ? 'التقاط الصورة الآن'
+                : userImage
+                  ? 'إعادة التصوير'
+                  : 'فتح الكاميرا'}
           </button>
-          <label className="m3-btn m3-btn--outline m3-btn--block mt-2 cursor-pointer">
-            <Upload size={17} aria-hidden="true" />
-            رفع صورة
-            <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-          </label>
+
+          <div className="flex flex-wrap gap-2 mt-2">
+            <label className="m3-btn m3-btn--outline cursor-pointer flex-1">
+              <Upload size={17} aria-hidden="true" />
+              رفع صورة
+              <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+            </label>
+            {userImage && (
+              <button type="button" className="m3-btn m3-btn--outline" onClick={resetImage}>
+                <RefreshCw size={16} aria-hidden="true" />
+                مسح الصورة
+              </button>
+            )}
+          </div>
         </div>
 
-        {autoStatus !== 'idle' && (
+        {qualityBlocked ? (
+          <div className="notice notice--warn quality-banner mt-3" role="alert">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div>
+              <strong>{qualityState === 'blur' ? 'فشل فحص الوضوح' : 'فشل فحص الوهج'}</strong>
+              <p>{qualityMessage}</p>
+              <div className="quality-banner__actions">
+                <button type="button" className="m3-btn m3-btn--sm m3-btn--secondary" onClick={() => startCamera()}>
+                  <Camera size={14} aria-hidden="true" />
+                  إعادة التصوير
+                </button>
+                <button type="button" className="m3-btn m3-btn--sm m3-btn--outline" onClick={handleBypassToggle}>
+                  <Zap size={14} aria-hidden="true" />
+                  ⚡ تخطي الفحص التلقائي واستخدام التحديد اليدوي
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : autoStatus !== 'idle' ? (
           <div className={`notice mt-3 ${autoStatus === 'done' ? 'notice--pass' : autoStatus === 'scanning' ? 'notice--info' : 'notice--warn'}`} role="status">
             {autoStatus === 'done' ? <CheckCircle2 size={16} aria-hidden="true" /> : autoStatus === 'scanning' ? <Sparkles size={16} aria-hidden="true" /> : <AlertCircle size={16} aria-hidden="true" />}
-            <span>{autoStatus === 'scanning' ? 'جارٍ فحص السطوع وتقدير موضع المنعكس…' : autoMessage}</span>
+            <span>{autoStatus === 'scanning' ? 'جارٍ قياس جودة الصورة والنقاط التشريحية…' : autoMessage}</span>
           </div>
+        ) : null}
+
+        {userImage && (
+          <>
+            <button
+              type="button"
+              className={`m3-btn m3-btn--block mt-2 ${bypassAuto ? 'm3-btn--primary' : 'm3-btn--outline'}`}
+              onClick={handleBypassToggle}
+              aria-pressed={bypassAuto}
+            >
+              <Zap size={16} aria-hidden="true" />
+              {bypassAuto
+                ? 'التحديد اليدوي مفعّل — اضغط لإيقاف التخطي'
+                : '⚡ تخطي الفحص التلقائي واستخدام التحديد اليدوي'}
+            </button>
+
+            <div className="audit-tools" role="group" aria-label="نوع النقطة المراد تعديلها على الصورة">
+              <span className="audit-tools__label">نقطة التعديل:</span>
+              <button
+                type="button"
+                className={`audit-tool${auditType === 'pupil' ? ' is-active' : ''}`}
+                aria-pressed={auditType === 'pupil'}
+                onClick={() => setAuditType('pupil')}
+              >
+                <span className="audit-tool__dot audit-tool__dot--pupil" aria-hidden="true" />
+                الحدقة
+              </button>
+              <button
+                type="button"
+                className={`audit-tool${auditType === 'reflex' ? ' is-active' : ''}`}
+                aria-pressed={auditType === 'reflex'}
+                onClick={() => setAuditType('reflex')}
+              >
+                <span className="audit-tool__dot audit-tool__dot--reflex" aria-hidden="true" />
+                الانعكاس القرني
+              </button>
+              <button
+                type="button"
+                className={`audit-tool${auditType === 'eyelid' ? ' is-active' : ''}`}
+                aria-pressed={auditType === 'eyelid'}
+                onClick={() => setAuditType('eyelid')}
+              >
+                <span className="audit-tool__dot audit-tool__dot--eyelid" aria-hidden="true" />
+                حد الجفن
+              </button>
+            </div>
+
+            {analysis && (
+              <div className="precision-meta" aria-label="مؤشرات جودة الصورة">
+                <span>HVID {analysis.landmarks.OD.hvidSource === 'detected' ? 'مقاس' : 'قياسي 11.7 مم'}</span>
+                <span>mm/px {analysis.mmPerPx.toFixed(4)}</span>
+                <span>وضوح {analysis.sharpness.toFixed(4)}</span>
+                <span>وهج {(analysis.glareRatio * 100).toFixed(0)}%</span>
+              </div>
+            )}
+          </>
         )}
 
         <div className="clinical-presets">
           <div className="clinical-presets__head">
-            <strong>تصنيف سريع بلمسة واحدة</strong>
-            <span>يُسجّل Hirschberg وMRD₁ تلقائياً</span>
+            <strong>إعداد سريري سريع</strong>
+            <span>يملأ Hirschberg و MRD₁ بنقرة واحدة</span>
           </div>
           <div className="clinical-presets__grid">
             {CLINICAL_PRESETS.map((preset) => {
@@ -630,7 +908,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
         <p className="field-hint mt-2 flex items-start gap-1.5">
           <ShieldCheck size={13} aria-hidden="true" />
-          راجع وضوح الصورة والقيمة الظاهرة قبل الاعتماد.
+          الحسابات تعتمد على قطر القزحية الأفقي (HVID) وقياس محلي بالكامل. لا تُرفع الصور إلى أي خدمة سحابية.
         </p>
       </section>
 
@@ -639,40 +917,48 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <div>
             <h2 className="card-head__title">
               <Eye size={20} aria-hidden="true" />
-              ملاحظات وقياسات العين
+              القياسات والتقييم السريري
             </h2>
-            <p className="card-head__sub">راجع المحاذاة، ثم سجّل علامات العين الخارجية والأعراض.</p>
+            <p className="card-head__sub">
+              تُحدّث القيم فور تعديل نقاط الحدقة أو الانعكاس أو حد الجفن على الصورة.
+            </p>
           </div>
-          <span className="pill pill--neutral"><Activity size={13} aria-hidden="true" /> فرز أولي</span>
+          <span className="pill pill--neutral">
+            <Activity size={13} aria-hidden="true" />
+            HVID 11.7 مم
+          </span>
         </div>
 
         <div className={`status-pill ${alignmentState === 'pass' ? 'is-pass' : alignmentState === 'warn' ? 'is-warn' : 'is-idle'}`} role="status">
           <span className="status-pill__label">
             {alignmentState === 'pass' ? <CheckCircle2 size={18} aria-hidden="true" /> : <AlertCircle size={18} aria-hidden="true" />}
-            محاذاة العينين والجفن
+            حالة المحاذاة العينية
           </span>
           <span className="status-pill__value">
-            {alignmentState === 'pass' && '✅ طبيعي'}
-            {alignmentState === 'warn' && '⚠️ اشتباه انحراف بصري / ارتخاء جفن'}
-            {alignmentState === 'idle' && 'لم يكتمل القياس'}
+            {alignmentState === 'pass' && 'طبيعي مبدئياً'}
+            {alignmentState === 'warn' && 'يحتاج مراجعة سريرية'}
+            {alignmentState === 'idle' && 'بانتظار القياس'}
           </span>
         </div>
 
         <div className="reading-grid mt-2">
           <div className="reading-box">
-            <span>المنعكس القرني · Hirschberg</span>
-            <strong>{hirschbergRecorded ? `${hirschbergMM.toFixed(2)} mm` : '—'}</strong>
-            <small>{hirschbergRecorded ? `${prismDiopters}Δ تقدير تقريبي` : 'بانتظار القياس'}</small>
+            <span>عدم تماثل الانعكاس — Hirschberg</span>
+            <strong>{hirschbergRecorded ? `${formatMM(hirschbergMM)} mm` : '—'}</strong>
+            <small>{hirschbergRecorded ? `${prismDiopters}PD تقديري` : 'بانتظار التحليل'}</small>
           </div>
           <div className="reading-box">
-            <span>فتحة الجفن · MRD₁</span>
+            <span>مسافة الجفن العلوي — MRD₁</span>
             <strong>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : '—'}</strong>
-            <small>{mrd1Recorded ? (mrd1MM < 2.5 ? 'دون حد النموذج' : 'داخل حد النموذج') : 'بانتظار التأكيد'}</small>
+            <small>{mrd1Recorded ? (mrd1MM < 2.5 ? 'اشتباه تدلي جفن' : 'ضمن الحدود') : 'بانتظار التحليل'}</small>
           </div>
         </div>
 
         <div className="tap-section">
-          <h3 className="section-title"><Eye size={16} aria-hidden="true" /> هل مظهر العين الخارجي سليم؟</h3>
+          <h3 className="section-title">
+            <Eye size={16} aria-hidden="true" />
+            الفحص الخارجي الظاهر
+          </h3>
           <button
             type="button"
             className={`external-gate-pass${externalEyeScreened && externalEyeFindings.length === 0 && !externalEyeGateAbnormal ? ' is-active' : ''}`}
@@ -681,8 +967,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           >
             <CheckCircle2 size={24} aria-hidden="true" />
             <span>
-              <strong>✅ العين الخارجية سليمة</strong>
-              <small>لا قشور، لا إفرازات، لا احمرار، لا عتامة</small>
+              <strong>✓ الفحص الخارجي طبيعي</strong>
+              <small>لا احمرار، لا إفرازات ظاهرة، ولا انحراف ملحوظ.</small>
             </span>
           </button>
 
@@ -695,30 +981,22 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               setExternalEyeScreened(true);
             }}
           >
-            {externalEyeGateAbnormal ? 'إخفاء العلامات غير الطبيعية' : '⚠️ توجد علامة غير طبيعية؟'}
+            {externalEyeGateAbnormal ? 'إخفاء ملاحظات الفحص الخارجي غير الطبيعية' : 'إضافة ملاحظة للفحص الخارجي غير الطبيعي'}
           </button>
 
           {externalEyeGateAbnormal && (
-            <div className="external-gate-chips" role="group" aria-label="علامات العين الخارجية">
-              {EYE_FINDINGS.filter(f => ['EYELID_CRUST_OR_PUS','EYE_DISCHARGE','SCLERAL_REDNESS','CORNEAL_HAZINESS'].includes(f.id)).map((finding) => {
+            <div className="external-gate-chips" role="group" aria-label="ملاحظات الفحص الخارجي">
+              {EYE_FINDINGS.filter((finding) => EXTERNAL_GATE_IDS.some((id) => id === finding.id)).map((finding) => {
                 const selected = externalEyeFindings.includes(finding.id);
-                const severity = EXTERNAL_SEVERITY[finding.id] ?? 'amber';
-                const tone = severity === 'red' ? 'urgent' : 'warn';
-                const labelMap: Record<string,string> = {
-                  EYELID_CRUST_OR_PUS: 'قشور',
-                  EYE_DISCHARGE: 'إفرازات',
-                  SCLERAL_REDNESS: 'احمرار',
-                  CORNEAL_HAZINESS: 'عتامة',
-                };
                 return (
                   <button
                     key={finding.id}
                     type="button"
                     aria-pressed={selected}
                     onClick={() => toggleFinding(finding.id)}
-                    className={`external-gate-chip external-gate-chip--${tone}`}
+                    className={`external-gate-chip external-gate-chip--${finding.tone}`}
                   >
-                    <span>{labelMap[finding.id] ?? finding.label}</span>
+                    <span>{finding.short}</span>
                     {selected && <CheckCircle2 size={16} aria-hidden="true" />}
                   </button>
                 );
@@ -728,39 +1006,51 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
           {externalEyeScreened && externalEyeFindings.length > 0 && (
             <p className="external-gate-summary" role="status">
-              سُجّلت {externalEyeFindings.length} علامة غير طبيعية؛ ستُرفع للإحالة في النتيجة.
+              تم تسجيل {externalEyeFindings.length} ملاحظة خارجية. سيُرفع العلم السريري وفقاً للضوابط.
             </p>
           )}
         </div>
 
         <div className="tap-section">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="section-title"><Sparkles size={16} aria-hidden="true" /> أعراض إجهاد العين</h3>
+            <h3 className="section-title">
+              <Sparkles size={16} aria-hidden="true" />
+              أعراض الإجهاد البصري
+            </h3>
             <span className="pill pill--primary">{asthenopiaScore} من 5</span>
           </div>
           <div className="grid gap-3">
-            {[
-              {label:'تضييق العينين لرؤية السبورة', selected:symptomSquint, toggle:()=>setSymptomSquint(!symptomSquint)},
-              {label:'إمالة الرأس أثناء النظر', selected:symptomTilt, toggle:()=>setSymptomTilt(!symptomTilt)},
-              {label:'فرك العين المتكرر أو الاحمرار', selected:symptomRub, toggle:()=>setSymptomRub(!symptomRub)},
-              {label:'تقريب الكتاب من الوجه', selected:symptomClose, toggle:()=>setSymptomClose(!symptomClose)},
-              {label:'صداع بعد القراءة المدرسية', selected:symptomHeadache, toggle:()=>setSymptomHeadache(!symptomHeadache)},
-            ].map((item,i)=>(
-              <button
-                key={i}
-                type="button"
-                aria-pressed={item.selected}
-                onClick={item.toggle}
-                className="rounded-2xl p-3.5 border-2 transition-all flex items-center justify-between text-right"
-                style={{
-                  borderColor: 'var(--m3-border)',
-                  backgroundColor: item.selected ? 'color-mix(in srgb, var(--m3-warn) 14%, transparent)' : 'transparent'
-                }}
-              >
-                <span>{item.label}</span>
-                {item.selected && <CheckCircle2 size={18} className="font-bold" style={{color:'var(--m3-warn)'}} />}
-              </button>
-            ))}
+            {ASTHENOPIA_SIGNS.map((item) => {
+              const selected =
+                (item.key === 'squint' && symptomSquint) ||
+                (item.key === 'tilt' && symptomTilt) ||
+                (item.key === 'rub' && symptomRub) ||
+                (item.key === 'close' && symptomClose) ||
+                (item.key === 'headache' && symptomHeadache);
+              const toggle = () => {
+                if (item.key === 'squint') setSymptomSquint(!symptomSquint);
+                if (item.key === 'tilt') setSymptomTilt(!symptomTilt);
+                if (item.key === 'rub') setSymptomRub(!symptomRub);
+                if (item.key === 'close') setSymptomClose(!symptomClose);
+                if (item.key === 'headache') setSymptomHeadache(!symptomHeadache);
+              };
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={toggle}
+                  className="rounded-2xl p-3.5 border-2 transition-all flex items-center justify-between text-right"
+                  style={{
+                    borderColor: 'var(--m3-border)',
+                    backgroundColor: selected ? 'color-mix(in srgb, var(--m3-warn) 14%, transparent)' : 'transparent',
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {selected && <CheckCircle2 size={18} style={{ color: 'var(--m3-warn)' }} />}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -768,34 +1058,15 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <summary>
             <span className="flex items-center gap-2">
               <Sliders size={16} aria-hidden="true" />
-              تعديل يدوي للمختص
+              ضبط القيم والتحقق اليدوي
             </span>
-            <span className="text-[10px] font-semibold text-slate-400">للمراجعة اليدوية</span>
+            <span className="text-[10px] font-semibold text-slate-400">للمراجع فقط</span>
           </summary>
           <div className="details-body">
-            <div className="segmented w-fit">
-              <button
-                type="button"
-                className="segmented__btn"
-                aria-pressed={activeEyeTarget === 'OS'}
-                onClick={() => setActiveEyeTarget('OS')}
-              >
-                العين اليسرى OS
-              </button>
-              <button
-                type="button"
-                className="segmented__btn"
-                aria-pressed={activeEyeTarget === 'OD'}
-                onClick={() => setActiveEyeTarget('OD')}
-              >
-                العين اليمنى OD
-              </button>
-            </div>
-
             <div className="slider-row">
               <div className="slider-row__head">
-                <span>انحراف المنعكس القرني (Hirschberg)</span>
-                <output>{hirschbergRecorded ? `${hirschbergMM.toFixed(2)} mm` : 'غير مسجل'}</output>
+                <span>عدم التماثل — Hirschberg</span>
+                <output>{hirschbergRecorded ? `${formatMM(hirschbergMM)} mm` : 'غير مسجل'}</output>
               </div>
               <input
                 type="range"
@@ -807,56 +1078,60 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 onChange={(event) => {
                   setHirschbergMM(Number(event.target.value));
                   setHirschbergRecorded(true);
-                  setAIQualityFlag(3); // Manual tap fallback overrides any automatic capture flag.
+                  setAIQualityFlag(3);
                 }}
-                aria-label="قيمة انحراف المنعكس القرني"
+                aria-label="قيمة Hirschberg بالمليمتر"
               />
-              <div className="flex justify-between text-[10px] text-[var(--m3-muted)] mono"><span>0.0</span><span>1.0</span><span>3.0 mm</span></div>
-              <p className="field-hint">
-                تُسجَّل القيمة تلقائياً عند لمس المنزلق أو اختيار تصنيف سريع. القيمة الصافية لتفاوت المنعكس بين العينين (بعد تعديل 0.5 مم ثابت لزاوية كابا Angle Kappa).
-                الإحالة عند ≥ 15Δ (ما يعادل 1.0 مم) أو MRD₁ أقل من 2.5 مم. التحويل التقريبي: 1 مم ≈ 15Δ.
-              </p>
+              <div className="flex justify-between text-[10px] text-[var(--m3-muted)] mono">
+                <span>0.0</span><span>1.0</span><span>3.0 mm</span>
+              </div>
             </div>
 
             <div className="slider-row">
               <div className="slider-row__head">
-                <span>المسافة الهامشية للجفن (MRD₁)</span>
+                <span>مسافة الجفن العلوي — MRD₁</span>
                 <output>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : 'غير مسجل'}</output>
               </div>
               <input
                 type="range"
                 className="m3-range"
-                min={1}
-                max={5.5}
+                min={0.5}
+                max={6}
                 step={0.1}
                 value={mrd1MM}
                 onChange={(event) => {
                   setMrd1MM(Number(event.target.value));
                   setMrd1Recorded(true);
-                  if (!aiQualityFlag) setAIQualityFlag(3);
+                  setAIQualityFlag(3);
                 }}
-                aria-label="قيمة المسافة الهامشية للجفن"
+                aria-label="قيمة MRD1 بالمليمتر"
               />
-              <div className="flex justify-between text-[10px] text-[var(--m3-muted)] mono"><span>1.0</span><span>2.5</span><span>5.5 mm</span></div>
-              <p className="field-hint">تُسجَّل القيمة تلقائياً عند لمس المنزلق؛ لا حاجة لتأكيد منفصل.</p>
+              <div className="flex justify-between text-[10px] text-[var(--m3-muted)] mono">
+                <span>0.5</span><span>2.5</span><span>6.0 mm</span>
+              </div>
             </div>
 
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <button type="button" onClick={() => runAutoDetection()} disabled={!userImage} className="m3-btn m3-btn--secondary m3-btn--sm">
+              <button
+                type="button"
+                onClick={() => runAutoDetection(userImage, bypassAuto)}
+                disabled={!userImage}
+                className="m3-btn m3-btn--secondary m3-btn--sm"
+              >
                 <Sparkles size={14} aria-hidden="true" />
-                إعادة المسح الآلي
+                إعادة الكشف التلقائي
               </button>
-              <span className="field-hint">مرجع التحويل: HVID = 11.7 mm</span>
+              <span className="field-hint">HVID = 11.7 mm</span>
             </div>
 
             <div className="slider-row">
               <div className="slider-row__head">
-                <span>جودة قراءة الذكاء الاصطناعي (AI_Quality_Flag)</span>
+                <span>مصدر القياس — AI_Quality_Flag</span>
                 <output>
-                  {aiQualityFlag === 1 && 'كشف آلي (1)'}
-                  {aiQualityFlag === 2 && 'إعادة تصوير ثم كشف آلي (2)'}
-                  {aiQualityFlag === 3 && 'إدخال يدوي (3)'}
-                  {!aiQualityFlag && 'غير محددة'}
+                  {aiQualityFlag === 1 && 'تلقائي (1)'}
+                  {aiQualityFlag === 2 && 'محاولة ثانية (2)'}
+                  {aiQualityFlag === 3 && 'تحديد يدوي (3)'}
+                  {!aiQualityFlag && 'غير مسجل'}
                 </output>
               </div>
               <div className="segmented w-fit">
@@ -866,7 +1141,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-pressed={aiQualityFlag === 1}
                   onClick={() => setAIQualityFlag(1)}
                 >
-                  1 · آلي
+                  1 — تلقائي
                 </button>
                 <button
                   type="button"
@@ -874,7 +1149,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-pressed={aiQualityFlag === 2}
                   onClick={() => setAIQualityFlag(2)}
                 >
-                  2 · إعادة تصوير
+                  2 — إعادة
                 </button>
                 <button
                   type="button"
@@ -882,11 +1157,11 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-pressed={aiQualityFlag === 3}
                   onClick={() => setAIQualityFlag(3)}
                 >
-                  3 · يدوي
+                  3 — يدوي
                 </button>
               </div>
               <p className="field-hint">
-                يُسجل تلقائياً حسب مصدر القراءة (كشف آلي / إعادة تصوير / إدخال يدوي) ويُحفظ مع السجل لتقييم جودة النموذج.
+                يجب أن تعكس هذه القيمة طريقة القراءة الفعلية: تلقائي، إعادة تصوير، أو تحديد يدوي على الصورة.
               </p>
             </div>
           </div>
@@ -895,16 +1170,16 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
         <div className={`notice mt-3 ${triageOcularFlag === 0 && hirschbergRecorded && mrd1Recorded ? 'notice--pass' : 'notice--warn'}`}>
           <ShieldCheck size={16} aria-hidden="true" />
           <span>
-            {(!hirschbergRecorded || !mrd1Recorded) && 'لم يكتمل توثيق قياسي المنعكس والجفن. عدم وجود قيمة لا يعني غياب الإشارة.'}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 0 && 'لم تُسجل إشارة تجاوز وفق حدود النموذج الحالية.'}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 1 && `إشارة في المنعكس القرني (${prismDiopters}Δ تقديرياً).`}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 2 && `قيمة MRD₁ دون حد النموذج (${mrd1MM.toFixed(1)} mm).`}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 3 && 'إشارتان في المنعكس والجفن؛ راجعهما في النتيجة.'}
+            {(!hirschbergRecorded || !mrd1Recorded) && 'لم تكتمل قيم Hirschberg و MRD₁ بعد. التقط صورة واضحة أو استخدم التحديد اليدوي.'}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 0 && 'القياسات ضمن الحدود المبدئية. تابع إلى تحليل النتائج.'}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 1 && `اشتباه حَوَل — ${prismDiopters} PD تقديري.`}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 2 && `قيمة MRD₁ أقل من الحد (${mrd1MM.toFixed(1)} mm).`}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 3 && 'اشتباه حَوَل مع تدلي جفن — يحتاج تقييماً سريرياً.'}
           </span>
         </div>
 
         <button type="button" onClick={onProceedToCDSS} className="m3-btn m3-btn--primary m3-btn--block mt-3">
-          عرض النتيجة والحفظ
+          المتابعة إلى التحليل السريري
           <ChevronDown size={16} className="-rotate-90" aria-hidden="true" />
         </button>
       </section>

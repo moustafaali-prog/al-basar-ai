@@ -1,0 +1,622 @@
+/**
+ * Client-side ophthalmic image quality + geometric normalization helpers.
+ *
+ * Everything in this module is pure Canvas / local math:
+ * no network requests, no cloud APIs, no external npm dependencies.
+ * It powers the "high-precision" capture gate (blur + glare), the HVID
+ * normalization of the Hirschberg reflex offset, and the human-in-the-loop
+ * visual audit HUD in `OcularBiometryStation.tsx`.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Canonical geometry
+ * ------------------------------------------------------------------ */
+
+/** Analysis frame used for every pixel operation (matches the alignment SVG). */
+export const ANALYSIS_WIDTH = 600;
+export const ANALYSIS_HEIGHT = 300;
+
+/** Eye regions of interest inside the analysis frame. */
+export const EYE_ROI = {
+  OD: { cx: 210, cy: 150, rx: 98, ry: 58 },
+  OS: { cx: 390, cy: 150, rx: 98, ry: 58 },
+} as const;
+
+export type EyeKey = keyof typeof EYE_ROI;
+
+/** Pediatric reference horizontal visible iris diameter (mean for Iraqi school children). */
+export const STANDARD_PEDIATRIC_HVID_MM = 11.7;
+
+/** Framing fallback: the reference frame width in pixels when HVID cannot be measured. */
+export const FALLBACK_HVID_PX = 60;
+
+/** Physiological corneal angle-kappa offset that must be removed before differencing eyes. */
+export const ANGLE_KAPPA_ADJUSTMENT_MM = 0.5;
+
+/** Hirschberg conversion used by this model (approximate, not a definitive measurement). */
+export const PRISM_DIOPTERS_PER_MM = 15;
+
+/** Clinically admissible pediatric ranges enforced before a record can be committed. */
+export const HIRSCHBERG_LIMITS = { min: 0, max: 3 } as const;
+export const MRD1_LIMITS = { min: 0.5, max: 6 } as const;
+
+/* ------------------------------------------------------------------ *
+ * Quality-gate thresholds
+ * ------------------------------------------------------------------ */
+
+/** A pixel is considered hyper-saturated (specular glare) when all channels exceed this. */
+export const SATURATION_THRESHOLD = 245;
+
+/** Glare is confirmed when saturated pixels span more than this share of the pupil disc. */
+export const GLARE_SPAN_THRESHOLD = 0.3;
+
+/** Minimum normalized Laplacian variance (0..1 luminance) for an acceptably sharp frame. */
+export const LAPLACIAN_VARIANCE_MIN = 0.0016;
+
+/** Minimum normalized luminance standard deviation (flat / washed-out frame guard). */
+export const CONTRAST_STD_MIN = 0.01;
+
+/* ------------------------------------------------------------------ *
+ * Types
+ * ------------------------------------------------------------------ */
+
+export interface ImagePoint {
+  x: number;
+  y: number;
+}
+
+/** How the natural-resolution photo was mapped into the analysis frame. */
+export interface AnalysisTransform {
+  imgWidth: number;
+  imgHeight: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+export interface EyeLandmarks {
+  eye: EyeKey;
+  /** Detected pupil centre (analysis-frame pixels). */
+  pupil: ImagePoint | null;
+  /** Detected Purkinje / corneal reflex (analysis-frame pixels). */
+  reflex: ImagePoint | null;
+  /** Detected upper eyelid margin used for MRD₁ (analysis-frame pixels). */
+  upperLid: ImagePoint | null;
+  pupilRadiusPx: number | null;
+  /** Raw pupil-to-reflex distance in pixels. */
+  offsetPx: number | null;
+  /** HVID measured in pixels (null when the standard framing fallback is used). */
+  hvidPx: number | null;
+  hvidSource: 'detected' | 'standard';
+  /** Share of the pupil disc that is hyper-saturated (0..1). */
+  saturatedPupilRatio: number;
+  /** Confidence of the automatic pupil detection (0..1). */
+  pupilConfidence: number;
+}
+
+export interface OcularFrameAnalysis {
+  landmarks: Record<EyeKey, EyeLandmarks>;
+  /** Normalized Laplacian variance over the eye band (0..1 luminance scale). */
+  sharpness: number;
+  /** Normalized luminance standard deviation over the eye band. */
+  contrast: number;
+  isBlurred: boolean;
+  hasGlare: boolean;
+  /** Worst saturated share across both pupils. */
+  glareRatio: number;
+  /** Millimetres per analysis pixel, derived from the (detected or standard) HVID. */
+  mmPerPx: number;
+  transform: AnalysisTransform;
+}
+
+export interface OcularRangeValidation {
+  hirschbergMM: number;
+  mrd1MM: number;
+  issues: string[];
+}
+
+export interface NetHirschbergResult {
+  /** Net inter-ocular asymmetry after removing the 0.5 mm physiological angle-kappa offset. */
+  hirschbergAsymMm: number;
+  /** Hirschberg_Prism_Diopters = Math.round(Hirschberg_Asym_mm * 15). */
+  prismDiopters: number;
+  odOffsetMm: number | null;
+  osOffsetMm: number | null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Low-level pixel helpers
+ * ------------------------------------------------------------------ */
+
+const luminance = (r: number, g: number, b: number): number => (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+const buildLuminanceMap = (data: Uint8ClampedArray, width: number, height: number): Float32Array => {
+  const map = new Float32Array(width * height);
+  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+    map[p] = luminance(data[i], data[i + 1], data[i + 2]);
+  }
+  return map;
+};
+
+/** Separable box blur used to suppress tiny specular highlights before detection. */
+const boxBlur = (source: Float32Array, width: number, height: number, radius: number): Float32Array => {
+  if (radius < 1) return source;
+  const horizontal = new Float32Array(width * height);
+  const output = new Float32Array(width * height);
+  const window = radius * 2 + 1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      let count = 0;
+      for (let k = -radius; k <= radius; k += 1) {
+        const xx = x + k;
+        if (xx < 0 || xx >= width) continue;
+        sum += source[y * width + xx];
+        count += 1;
+      }
+      horizontal[y * width + x] = sum / count;
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      let count = 0;
+      for (let k = -radius; k <= radius; k += 1) {
+        const yy = y + k;
+        if (yy < 0 || yy >= height) continue;
+        sum += horizontal[yy * width + x];
+        count += 1;
+      }
+      output[y * width + x] = sum / count;
+    }
+  }
+
+  return output;
+};
+
+/**
+ * Variance of the 4-neighbour Laplacian over the eye band.
+ * A low value means the frame is blurred (camera shake or defocus).
+ */
+export const computeLaplacianVariance = (
+  map: Float32Array,
+  width: number,
+  height: number,
+): number => {
+  const x0 = EYE_ROI.OD.cx - EYE_ROI.OD.rx - 8;
+  const x1 = EYE_ROI.OS.cx + EYE_ROI.OS.rx + 8;
+  const y0 = EYE_ROI.OD.cy - EYE_ROI.OD.ry - 8;
+  const y1 = EYE_ROI.OD.cy + EYE_ROI.OD.ry + 8;
+
+  let sum = 0;
+  let sumSq = 0;
+  let count = 0;
+
+  for (let y = Math.max(1, y0); y <= Math.min(height - 2, y1); y += 1) {
+    for (let x = Math.max(1, x0); x <= Math.min(width - 2, x1); x += 1) {
+      const index = y * width + x;
+      const lap = 4 * map[index] - map[index - 1] - map[index + 1] - map[index - width] - map[index + width];
+      sum += lap;
+      sumSq += lap * lap;
+      count += 1;
+    }
+  }
+
+  if (count === 0) return 0;
+  const mean = sum / count;
+  return Math.max(0, sumSq / count - mean * mean);
+};
+
+/** Normalized luminance standard deviation over the eye band (flat-frame guard). */
+export const computeLuminanceStdDev = (
+  map: Float32Array,
+  width: number,
+  height: number,
+): number => {
+  const x0 = EYE_ROI.OD.cx - EYE_ROI.OD.rx - 8;
+  const x1 = EYE_ROI.OS.cx + EYE_ROI.OS.rx + 8;
+  const y0 = EYE_ROI.OD.cy - EYE_ROI.OD.ry - 8;
+  const y1 = EYE_ROI.OD.cy + EYE_ROI.OD.ry + 8;
+
+  let sum = 0;
+  let sumSq = 0;
+  let count = 0;
+  for (let y = Math.max(0, y0); y <= Math.min(height - 1, y1); y += 1) {
+    for (let x = Math.max(0, x0); x <= Math.min(width - 1, x1); x += 1) {
+      const value = map[y * width + x];
+      sum += value;
+      sumSq += value * value;
+      count += 1;
+    }
+  }
+  if (count === 0) return 0;
+  const mean = sum / count;
+  return Math.sqrt(Math.max(0, sumSq / count - mean * mean));
+};
+
+const insideEllipse = (x: number, y: number, roi: { cx: number; cy: number; rx: number; ry: number }): boolean => {
+  const dx = (x - roi.cx) / roi.rx;
+  const dy = (y - roi.cy) / roi.ry;
+  return dx * dx + dy * dy <= 1;
+};
+
+const distance = (a: ImagePoint, b: ImagePoint): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+/* ------------------------------------------------------------------ *
+ * Per-eye landmark detection
+ * ------------------------------------------------------------------ */
+
+const detectEyeLandmarks = (
+  blurred: Float32Array,
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  eye: EyeKey,
+): EyeLandmarks => {
+  const roi = EYE_ROI[eye];
+
+  let minLum = 1;
+  let maxLum = 0;
+  let minX: number = roi.cx;
+  let minY: number = roi.cy;
+  let maxX: number = roi.cx;
+  let maxY: number = roi.cy;
+
+  for (let y = Math.max(0, roi.cy - roi.ry); y <= Math.min(height - 1, roi.cy + roi.ry); y += 1) {
+    for (let x = Math.max(0, roi.cx - roi.rx); x <= Math.min(width - 1, roi.cx + roi.rx); x += 1) {
+      if (!insideEllipse(x, y, roi)) continue;
+      const value = blurred[y * width + x];
+      if (value < minLum) {
+        minLum = value;
+        minX = x;
+        minY = y;
+      }
+      if (value > maxLum) {
+        maxLum = value;
+        maxX = x;
+        maxY = y;
+      }
+    }
+  }
+
+  const dynamicRange = maxLum - minLum;
+
+  // --- Pupil: darkest connected region inside the eye ROI -----------------
+  const darkThreshold = minLum + dynamicRange * 0.2;
+  let darkArea = 0;
+  let darkSumX = 0;
+  let darkSumY = 0;
+  for (let y = Math.max(0, roi.cy - roi.ry); y <= Math.min(height - 1, roi.cy + roi.ry); y += 1) {
+    for (let x = Math.max(0, roi.cx - roi.rx); x <= Math.min(width - 1, roi.cx + roi.rx); x += 1) {
+      if (!insideEllipse(x, y, roi)) continue;
+      if (blurred[y * width + x] <= darkThreshold) {
+        darkArea += 1;
+        darkSumX += x;
+        darkSumY += y;
+      }
+    }
+  }
+
+  const pupilDetected = darkArea >= 14;
+  const pupil: ImagePoint | null = pupilDetected
+    ? { x: darkSumX / darkArea, y: darkSumY / darkArea }
+    : { x: minX, y: minY };
+  const pupilRadiusPx = pupilDetected
+    ? Math.min(60, Math.max(3, Math.sqrt(darkArea / Math.PI)))
+    : null;
+
+  // --- Corneal reflex (Purkinje): brightest point inside the eye ROI -------
+  const reflexDetected = dynamicRange > 0.12;
+  const reflex: ImagePoint | null = reflexDetected ? { x: maxX, y: maxY } : null;
+
+  // --- Specular glare inside the pupil disc -------------------------------
+  let pupilPixels = 0;
+  let saturatedPixels = 0;
+  if (pupilRadiusPx) {
+    const radius = pupilRadiusPx * 1.15;
+    const radiusSq = radius * radius;
+    for (let y = Math.max(0, Math.floor(pupil.y - radius)); y <= Math.min(height - 1, Math.ceil(pupil.y + radius)); y += 1) {
+      for (let x = Math.max(0, Math.floor(pupil.x - radius)); x <= Math.min(width - 1, Math.ceil(pupil.x + radius)); x += 1) {
+        const dx = x - pupil.x;
+        const dy = y - pupil.y;
+        if (dx * dx + dy * dy > radiusSq) continue;
+        pupilPixels += 1;
+        const index = (y * width + x) * 4;
+        if (data[index] > SATURATION_THRESHOLD && data[index + 1] > SATURATION_THRESHOLD && data[index + 2] > SATURATION_THRESHOLD) {
+          saturatedPixels += 1;
+        }
+      }
+    }
+  }
+  const saturatedPupilRatio = pupilPixels > 0 ? saturatedPixels / pupilPixels : 0;
+
+  // --- HVID measurement (horizontal visible iris diameter in pixels) -------
+  let hvidPx: number | null = null;
+  if (pupilDetected && pupilRadiusPx) {
+    const scleraThreshold = minLum + dynamicRange * 0.55;
+    const row = Math.round(pupil.y);
+    const leftLimit = Math.max(0, roi.cx - roi.rx);
+    const rightLimit = Math.min(width - 1, roi.cx + roi.rx);
+
+    const findEdge = (step: 1 | -1): number | null => {
+      let run = 0;
+      for (let x = Math.round(pupil.x); x >= leftLimit && x <= rightLimit; x += step) {
+        const value = blurred[row * width + x];
+        if (value >= scleraThreshold) {
+          run += 1;
+          if (run >= 3) return x;
+        } else {
+          run = 0;
+        }
+      }
+      return null;
+    };
+
+    const leftEdge = findEdge(-1);
+    const rightEdge = findEdge(1);
+    if (leftEdge !== null && rightEdge !== null) {
+      const measured = rightEdge - leftEdge;
+      if (measured >= 40 && measured <= 170) hvidPx = measured;
+    }
+  }
+
+  // --- Upper lid margin for MRD₁ ------------------------------------------
+  let upperLid: ImagePoint | null = null;
+  if (pupilDetected && pupilRadiusPx) {
+    const column = Math.round(pupil.x);
+    const start = Math.max(1, Math.round(pupil.y - pupilRadiusPx * 3.4));
+    const end = Math.min(height - 2, Math.round(pupil.y - pupilRadiusPx * 0.35));
+    let bestGradient = 0;
+    let bestY = -1;
+    for (let y = start; y <= end; y += 1) {
+      const gradient = Math.abs(blurred[(y + 1) * width + column] - blurred[(y - 1) * width + column]);
+      if (gradient > bestGradient) {
+        bestGradient = gradient;
+        bestY = y;
+      }
+    }
+    if (bestY > 0 && bestGradient >= 0.018) {
+      upperLid = { x: pupil.x, y: bestY };
+    }
+  }
+
+  const offsetPx = pupil && reflex ? distance(pupil, reflex) : null;
+
+  return {
+    eye,
+    pupil,
+    reflex,
+    upperLid,
+    pupilRadiusPx,
+    offsetPx,
+    hvidPx,
+    hvidSource: hvidPx ? 'detected' : 'standard',
+    saturatedPupilRatio,
+    pupilConfidence: pupilDetected ? Math.min(1, darkArea / 220) : 0,
+  };
+};
+
+/* ------------------------------------------------------------------ *
+ * Frame analysis
+ * ------------------------------------------------------------------ */
+
+/** Draws the photo into the canonical analysis frame and returns the mapping used. */
+export const buildAnalysisFrame = (image: HTMLImageElement): {
+  canvas: HTMLCanvasElement;
+  transform: AnalysisTransform;
+} => {
+  const canvas = document.createElement('canvas');
+  canvas.width = ANALYSIS_WIDTH;
+  canvas.height = ANALYSIS_HEIGHT;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    throw new Error('تعذر تجهيز إطار التحليل للصورة.');
+  }
+
+  const imgWidth = image.naturalWidth || image.width || ANALYSIS_WIDTH;
+  const imgHeight = image.naturalHeight || image.height || ANALYSIS_HEIGHT;
+  const scale = Math.min(ANALYSIS_WIDTH / imgWidth, ANALYSIS_HEIGHT / imgHeight);
+  const drawWidth = imgWidth * scale;
+  const drawHeight = imgHeight * scale;
+  const offsetX = (ANALYSIS_WIDTH - drawWidth) / 2;
+  const offsetY = (ANALYSIS_HEIGHT - drawHeight) / 2;
+
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
+  ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+
+  return {
+    canvas,
+    transform: { imgWidth, imgHeight, scale, offsetX, offsetY },
+  };
+};
+
+/**
+ * Full client-side analysis of a captured/uploaded eye photo:
+ * sharpness gate, glare gate, per-eye landmarks and the HVID scale factor.
+ */
+export const analyzeOcularFrame = (image: HTMLImageElement): OcularFrameAnalysis => {
+  const { canvas, transform } = buildAnalysisFrame(image);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('تعذر قراءة الصورة للتحليل.');
+  const imageData = ctx.getImageData(0, 0, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
+  const raw = buildLuminanceMap(imageData.data, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
+  const blurred = boxBlur(raw, ANALYSIS_WIDTH, ANALYSIS_HEIGHT, 2);
+
+  const sharpness = computeLaplacianVariance(blurred, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
+  const contrast = computeLuminanceStdDev(blurred, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
+
+  const landmarks = {
+    OD: detectEyeLandmarks(blurred, imageData.data, ANALYSIS_WIDTH, ANALYSIS_HEIGHT, 'OD'),
+    OS: detectEyeLandmarks(blurred, imageData.data, ANALYSIS_WIDTH, ANALYSIS_HEIGHT, 'OS'),
+  };
+
+  const glareRatio = Math.max(landmarks.OD.saturatedPupilRatio, landmarks.OS.saturatedPupilRatio);
+
+  // HVID scale: use the measured iris diameter when both eyes agree, otherwise
+  // fall back to the canonical framing reference so the workflow never stalls.
+  const detected = [landmarks.OD.hvidPx, landmarks.OS.hvidPx].filter((v): v is number => typeof v === 'number');
+  let hvidReference: number | null = null;
+  if (detected.length === 2) {
+    const [a, b] = detected;
+    if (Math.abs(a - b) <= Math.max(12, a * 0.25)) hvidReference = (a + b) / 2;
+  } else if (detected.length === 1) {
+    hvidReference = detected[0];
+  }
+  const hvidPx = hvidReference ?? FALLBACK_HVID_PX;
+
+  if (hvidReference) {
+    landmarks.OD.hvidPx = hvidReference;
+    landmarks.OS.hvidPx = hvidReference;
+    landmarks.OD.hvidSource = 'detected';
+    landmarks.OS.hvidSource = 'detected';
+  }
+
+  const isBlurred = sharpness < LAPLACIAN_VARIANCE_MIN || contrast < CONTRAST_STD_MIN;
+  const hasGlare = glareRatio > GLARE_SPAN_THRESHOLD;
+
+  return {
+    landmarks,
+    sharpness,
+    contrast,
+    isBlurred,
+    hasGlare,
+    glareRatio,
+    mmPerPx: STANDARD_PEDIATRIC_HVID_MM / hvidPx,
+    transform,
+  };
+};
+
+/* ------------------------------------------------------------------ *
+ * Geometric normalization
+ * ------------------------------------------------------------------ */
+
+/**
+ * Net inter-ocular reflex asymmetry.
+ * Each eye's measured reflex decentration is corrected by the physiological
+ * 0.5 mm angle-kappa offset before the two eyes are differenced.
+ */
+export const computeNetHirschberg = (
+  landmarks: Record<EyeKey, EyeLandmarks>,
+  mmPerPx: number,
+): NetHirschbergResult => {
+  const odPx = landmarks.OD.offsetPx;
+  const osPx = landmarks.OS.offsetPx;
+  const odOffsetMm = odPx === null ? null : odPx * mmPerPx;
+  const osOffsetMm = osPx === null ? null : osPx * mmPerPx;
+
+  const adjustedOd = odOffsetMm === null ? null : Math.max(0, odOffsetMm - ANGLE_KAPPA_ADJUSTMENT_MM);
+  const adjustedOs = osOffsetMm === null ? null : Math.max(0, osOffsetMm - ANGLE_KAPPA_ADJUSTMENT_MM);
+
+  let asym: number | null = null;
+  if (adjustedOd !== null && adjustedOs !== null) {
+    asym = Math.abs(adjustedOd - adjustedOs);
+  } else if (adjustedOd !== null) {
+    asym = adjustedOd;
+  } else if (adjustedOs !== null) {
+    asym = adjustedOs;
+  }
+
+  const hirschbergAsymMm = asym === null ? 0 : asym;
+
+  return {
+    hirschbergAsymMm,
+    prismDiopters: Math.round(hirschbergAsymMm * PRISM_DIOPTERS_PER_MM),
+    odOffsetMm,
+    osOffsetMm,
+  };
+};
+
+/** MRD₁ estimate from the pupil margin to the detected lower lid margin. */
+export const computeMRD1FromLandmarks = (
+  landmarks: EyeLandmarks,
+  mmPerPx: number,
+): number | null => {
+  if (!landmarks.upperLid || !landmarks.reflex) return null;
+  // MRD₁ = corneal light reflex → upper eyelid margin (validated later).
+  const gapPx = landmarks.reflex.y - landmarks.upperLid.y;
+  return gapPx * mmPerPx;
+};
+
+/** Clamp + flag ocular values that leave the admissible pediatric ranges. */
+export const validateOcularRanges = (
+  hirschbergMM: number,
+  mrd1MM: number,
+): OcularRangeValidation => {
+  const issues: string[] = [];
+
+  let safeHirschberg = hirschbergMM;
+  if (!Number.isFinite(safeHirschberg) || safeHirschberg < HIRSCHBERG_LIMITS.min || safeHirschberg > HIRSCHBERG_LIMITS.max) {
+    safeHirschberg = Math.min(HIRSCHBERG_LIMITS.max, Math.max(HIRSCHBERG_LIMITS.min, Number.isFinite(hirschbergMM) ? hirschbergMM : 0));
+    issues.push(`قيمة Hirschberg خارج النطاق السريري المسموح (${HIRSCHBERG_LIMITS.min}–${HIRSCHBERG_LIMITS.max} مم)؛ عُدّلت تلقائياً إلى ${safeHirschberg.toFixed(2)} مم.`);
+  }
+
+  let safeMrd1 = mrd1MM;
+  if (!Number.isFinite(safeMrd1) || safeMrd1 < MRD1_LIMITS.min || safeMrd1 > MRD1_LIMITS.max) {
+    safeMrd1 = Math.min(MRD1_LIMITS.max, Math.max(MRD1_LIMITS.min, Number.isFinite(mrd1MM) ? mrd1MM : MRD1_LIMITS.min));
+    issues.push(`قيمة MRD₁ خارج النطاق السريري المسموح (${MRD1_LIMITS.min}–${MRD1_LIMITS.max} مم)؛ عُدّلت تلقائياً إلى ${safeMrd1.toFixed(1)} مم.`);
+  }
+
+  return { hirschbergMM: +safeHirschberg.toFixed(2), mrd1MM: +safeMrd1.toFixed(1), issues };
+};
+
+/* ------------------------------------------------------------------ *
+ * Coordinate mapping helpers for the visual audit HUD
+ * ------------------------------------------------------------------ */
+
+export const analysisToNatural = (point: ImagePoint, t: AnalysisTransform): ImagePoint => ({
+  x: (point.x - t.offsetX) / t.scale,
+  y: (point.y - t.offsetY) / t.scale,
+});
+
+export const naturalToAnalysis = (point: ImagePoint, t: AnalysisTransform): ImagePoint => ({
+  x: point.x * t.scale + t.offsetX,
+  y: point.y * t.scale + t.offsetY,
+});
+
+/**
+ * The preview stage renders the photo with `object-fit: contain`, so the
+ * natural→screen mapping uses the same fit model as the analysis frame.
+ */
+export const naturalToScreen = (
+  point: ImagePoint,
+  t: AnalysisTransform,
+  boxWidth: number,
+  boxHeight: number,
+): ImagePoint => {
+  const scale = Math.min(boxWidth / t.imgWidth, boxHeight / t.imgHeight);
+  return {
+    x: point.x * scale + (boxWidth - t.imgWidth * scale) / 2,
+    y: point.y * scale + (boxHeight - t.imgHeight * scale) / 2,
+  };
+};
+
+export const screenToNatural = (
+  x: number,
+  y: number,
+  t: AnalysisTransform,
+  boxWidth: number,
+  boxHeight: number,
+): ImagePoint => {
+  const scale = Math.min(boxWidth / t.imgWidth, boxHeight / t.imgHeight);
+  return {
+    x: (x - (boxWidth - t.imgWidth * scale) / 2) / scale,
+    y: (y - (boxHeight - t.imgHeight * scale) / 2) / scale,
+  };
+};
+
+/** Returns the eye whose region contains the analysis-frame point (nearest wins). */
+export const eyeAtAnalysisPoint = (point: ImagePoint): EyeKey | null => {
+  const score = (eye: EyeKey) => {
+    const roi = EYE_ROI[eye];
+    const dx = (point.x - roi.cx) / roi.rx;
+    const dy = (point.y - roi.cy) / roi.ry;
+    return dx * dx + dy * dy;
+  };
+  const odScore = score('OD');
+  const osScore = score('OS');
+  if (odScore > 1.6 && osScore > 1.6) return null;
+  return odScore <= osScore ? 'OD' : 'OS';
+};

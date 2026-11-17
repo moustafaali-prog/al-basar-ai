@@ -9,6 +9,11 @@ export default defineConfig(() => {
     // while VITE_BASE still allows an explicit override when needed.
     base: process.env.VITE_BASE || './',
     plugins: [react(), tailwindcss()],
+    build: {
+      // The offline app shell is intentionally shipped as one cached chunk.
+      // Keep the accepted budget explicit so CI stays warning-free.
+      chunkSizeWarningLimit: 700,
+    },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),

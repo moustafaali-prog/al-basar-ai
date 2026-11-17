@@ -1,5 +1,19 @@
+/*
+ * Al-Basar AI — offline-first application shell.
+ * The service worker precaches the built HTML, its hashed JS/CSS bundles,
+ * the web manifest and the install icons. Runtime fetches are then served
+ * cache-first, so school screening continues with no network at all.
+ */
 const CACHE_PREFIX = 'albasar-app-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v4`;
+const CACHE_NAME = `${CACHE_PREFIX}v5`;
+
+const OPTIONAL_APP_SHELL_FILES = [
+  './manifest.webmanifest',
+  './pwa-icon.svg',
+  './icon-180.png',
+  './icon-192.png',
+  './icon-512.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -12,14 +26,18 @@ self.addEventListener('install', (event) => {
     const assets = Array.from(html.matchAll(/(?:src|href)="([^"#]+\.(?:js|css)(?:\?[^\"]*)?)"/g))
       .map((match) => new URL(match[1], self.location.href).href)
       .filter((url) => new URL(url).origin === self.location.origin);
-    await Promise.all(assets.map(async (url) => {
+
+    const optionalFiles = OPTIONAL_APP_SHELL_FILES.map((path) => new URL(path, self.location.href).href);
+
+    await Promise.all([...assets, ...optionalFiles].map(async (url) => {
       try {
         const assetResponse = await fetch(url, { cache: 'reload' });
         if (assetResponse.ok) await cache.put(url, assetResponse);
       } catch {
-        // A failed optional asset does not prevent installation of the application shell.
+        // An optional icon/manifest asset never blocks the offline shell.
       }
     }));
+
     await self.skipWaiting();
   })());
 });
@@ -36,7 +54,10 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  if (request.method !== 'GET') return;
+
+  // Keep all application traffic same-origin; Google Fonts remain optional.
+  if (new URL(request.url).origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
