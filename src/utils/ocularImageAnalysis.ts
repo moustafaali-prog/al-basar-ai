@@ -72,6 +72,13 @@ export interface ImagePoint {
   y: number;
 }
 
+/**
+ * Any locally decoded frame the analyser can draw from. Burst capture keeps
+ * full-resolution off-screen canvases in memory so no lossy re-encoding is
+ * introduced between the sensor frame and the pixel measurements.
+ */
+export type OcularFrameSource = HTMLImageElement | HTMLCanvasElement | ImageBitmap;
+
 /** How the natural-resolution photo was mapped into the analysis frame. */
 export interface AnalysisTransform {
   imgWidth: number;
@@ -114,6 +121,8 @@ export interface OcularFrameAnalysis {
   /** Millimetres per analysis pixel, derived from the (detected or standard) HVID. */
   mmPerPx: number;
   transform: AnalysisTransform;
+  /** Number of full-resolution frames fused into this result (1 for a single upload). */
+  burstCount?: number;
 }
 
 export interface OcularRangeValidation {
@@ -628,7 +637,7 @@ const detectEyeLandmarks = (
  * ------------------------------------------------------------------ */
 
 /** Draws the photo into the canonical analysis frame and returns the mapping used. */
-export const buildAnalysisFrame = (image: HTMLImageElement): {
+export const buildAnalysisFrame = (image: OcularFrameSource): {
   canvas: HTMLCanvasElement;
   transform: AnalysisTransform;
 } => {
@@ -640,14 +649,22 @@ export const buildAnalysisFrame = (image: HTMLImageElement): {
     throw new Error('تعذر تجهيز إطار التحليل للصورة.');
   }
 
-  const imgWidth = image.naturalWidth || image.width || ANALYSIS_WIDTH;
-  const imgHeight = image.naturalHeight || image.height || ANALYSIS_HEIGHT;
+  const imgWidth = (image instanceof HTMLImageElement
+    ? image.naturalWidth || image.width
+    : image.width) || ANALYSIS_WIDTH;
+  const imgHeight = (image instanceof HTMLImageElement
+    ? image.naturalHeight || image.height
+    : image.height) || ANALYSIS_HEIGHT;
   const scale = Math.min(ANALYSIS_WIDTH / imgWidth, ANALYSIS_HEIGHT / imgHeight);
   const drawWidth = imgWidth * scale;
   const drawHeight = imgHeight * scale;
   const offsetX = (ANALYSIS_WIDTH - drawWidth) / 2;
   const offsetY = (ANALYSIS_HEIGHT - drawHeight) / 2;
 
+  // Full-sensor frames are downsampled into the canonical 600×300 analysis
+  // frame. High-quality smoothing preserves sub-pixel limbus/reflex edges.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
   ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
@@ -662,7 +679,7 @@ export const buildAnalysisFrame = (image: HTMLImageElement): {
  * Full client-side analysis of a captured/uploaded eye photo:
  * sharpness gate, glare gate, per-eye landmarks and the HVID scale factor.
  */
-export const analyzeOcularFrame = (image: HTMLImageElement): OcularFrameAnalysis => {
+export const analyzeOcularFrame = (image: OcularFrameSource): OcularFrameAnalysis => {
   const { canvas, transform } = buildAnalysisFrame(image);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('تعذر قراءة الصورة للتحليل.');
@@ -711,8 +728,101 @@ export const analyzeOcularFrame = (image: HTMLImageElement): OcularFrameAnalysis
     glareRatio,
     mmPerPx: STANDARD_PEDIATRIC_HVID_MM / hvidPx,
     transform,
+    burstCount: 1,
   };
 };
+
+/* ------------------------------------------------------------------ *
+ * Multi-frame spatial fusion
+ * ------------------------------------------------------------------ */
+
+const medianPoint = (points: ImagePoint[]): ImagePoint | null => {
+  if (points.length === 0) return null;
+  const x = median(points.map((point) => point.x));
+  const y = median(points.map((point) => point.y));
+  return x === null || y === null ? null : { x, y };
+};
+
+/**
+ * Fuses a short full-resolution burst into one robust measurement.
+ *
+ * Pupil centre, corneal reflex, upper-lid margin, pupil radius and HVID are the
+ * per-coordinate median of the individual frames. Because hand tremor shifts
+ * each frame by a different sub-pixel amount, the median cancels transient
+ * jitter instead of averaging it into the final Hirschberg/MRD₁ geometry.
+ * Quality booleans are recomputed from the median metrics so one bad frame
+ * cannot silently open or close the gate.
+ */
+export const mergeOcularAnalyses = (frames: OcularFrameAnalysis[]): OcularFrameAnalysis => {
+  if (frames.length === 0) {
+    throw new Error('تعذر دمج الإطارات: لا توجد إطارات صالحة.');
+  }
+  if (frames.length === 1) {
+    return { ...frames[0], burstCount: frames[0].burstCount ?? 1 };
+  }
+
+  const numericMedian = (values: number[]): number | null => median(values);
+
+  const detectedHvidValues = frames
+    .flatMap((frame) => [frame.landmarks.OD.hvidPx, frame.landmarks.OS.hvidPx])
+    .filter((value): value is number => value !== null);
+  const hvidReference = numericMedian(detectedHvidValues);
+  const hvidPx = hvidReference ?? FALLBACK_HVID_PX;
+
+  const mergeEye = (eye: EyeKey): EyeLandmarks => {
+    const eyeFrames = frames.map((frame) => frame.landmarks[eye]);
+    const pupils = eyeFrames
+      .map((landmarks) => landmarks.pupil)
+      .filter((point): point is ImagePoint => point !== null);
+    const reflexes = eyeFrames
+      .map((landmarks) => landmarks.reflex)
+      .filter((point): point is ImagePoint => point !== null);
+    const lids = eyeFrames
+      .map((landmarks) => landmarks.upperLid)
+      .filter((point): point is ImagePoint => point !== null);
+
+    const pupil = medianPoint(pupils);
+    const reflex = medianPoint(reflexes);
+    const upperLid = medianPoint(lids);
+    const pupilRadiusPx = numericMedian(eyeFrames
+      .map((landmarks) => landmarks.pupilRadiusPx)
+      .filter((value): value is number => value !== null));
+
+    return {
+      eye,
+      pupil,
+      reflex,
+      upperLid,
+      pupilRadiusPx,
+      offsetPx: pupil && reflex ? distance(pupil, reflex) : null,
+      hvidPx: hvidReference,
+      hvidSource: hvidReference === null ? 'standard' : 'detected',
+      saturatedPupilRatio: numericMedian(eyeFrames.map((landmarks) => landmarks.saturatedPupilRatio)) ?? 0,
+      pupilConfidence: numericMedian(eyeFrames.map((landmarks) => landmarks.pupilConfidence)) ?? 0,
+    };
+  };
+
+  const landmarks = { OD: mergeEye('OD'), OS: mergeEye('OS') };
+  const sharpness = numericMedian(frames.map((frame) => frame.sharpness)) ?? 0;
+  const contrast = numericMedian(frames.map((frame) => frame.contrast)) ?? 0;
+  const glareRatio = Math.max(landmarks.OD.saturatedPupilRatio, landmarks.OS.saturatedPupilRatio);
+
+  return {
+    landmarks,
+    sharpness,
+    contrast,
+    isBlurred: sharpness < LAPLACIAN_VARIANCE_MIN || contrast < CONTRAST_STD_MIN,
+    hasGlare: glareRatio > GLARE_SPAN_THRESHOLD,
+    glareRatio,
+    mmPerPx: STANDARD_PEDIATRIC_HVID_MM / hvidPx,
+    transform: frames[0].transform,
+    burstCount: frames.length,
+  };
+};
+
+/** Convenience wrapper: analyse every source and fuse the whole burst. */
+export const analyzeOcularBurst = (frames: OcularFrameSource[]): OcularFrameAnalysis =>
+  mergeOcularAnalyses(frames.map((frame) => analyzeOcularFrame(frame)));
 
 /* ------------------------------------------------------------------ *
  * Geometric normalization

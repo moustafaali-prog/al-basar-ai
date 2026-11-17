@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Eye,
+  Lock,
   RefreshCw,
   ShieldCheck,
   Sliders,
@@ -26,6 +27,7 @@ import {
   computeMRD1FromLandmarks,
   computeNetHirschberg,
   eyeAtAnalysisPoint,
+  mergeOcularAnalyses,
   validateOcularRanges,
   type EyeKey,
   type EyeLandmarks,
@@ -37,6 +39,103 @@ import { useFeedback } from './FeedbackProvider';
 type AutoStatus = 'idle' | 'scanning' | 'done' | 'error';
 type QualityState = 'idle' | 'clear' | 'blur' | 'glare';
 type AuditPointType = 'pupil' | 'reflex' | 'eyelid';
+type StabilityState = 'idle' | 'unstable' | 'stable';
+
+type ExtendedTrackConstraintSet = MediaTrackConstraintSet & {
+  focusMode?: string;
+  exposureMode?: string;
+  whiteBalanceMode?: string;
+};
+
+type ExtendedTrackCapabilities = MediaTrackCapabilities & {
+  focusMode?: string[];
+  exposureMode?: string[];
+  whiteBalanceMode?: string[];
+};
+
+interface StabilityTracker {
+  previous: Float32Array | null;
+  previousMean: number;
+  smoothedMotion: number;
+  stableSince: number;
+  state: StabilityState;
+  locked: boolean;
+  locking: boolean;
+  lockedAt: number;
+  unstableStreak: number;
+  lockSuppressedUntil: number;
+}
+
+const BURST_FRAME_COUNT = 3;
+const BURST_INTERVAL_MS = 150;
+const STABILITY_SAMPLE_MS = 120;
+const STABILITY_SETTLE_MS = 850;
+const STABILITY_STABLE_MOTION = 0.018;
+const STABILITY_UNSTABLE_MOTION = 0.04;
+const STABILITY_UNSTABLE_STREAK = 6;
+const CAMERA_LOCK_GRACE_MS = 1200;
+const CAMERA_LOCK_SUPPRESS_MS = 3500;
+
+const waitFor = (milliseconds: number): Promise<void> => new Promise((resolve) => {
+  window.setTimeout(resolve, milliseconds);
+});
+
+/**
+ * Grabs a full-sensor-resolution frame from the video element.
+ * This deliberately never uses the CSS-scaled preview dimensions.
+ */
+const captureVideoFrame = (video: HTMLVideoElement): HTMLCanvasElement | null => {
+  if (!video.videoWidth || !video.videoHeight) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) return null;
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas;
+};
+
+const canvasToImage = (canvas: HTMLCanvasElement): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+  const image = new Image();
+  image.onload = () => resolve(image);
+  image.onerror = () => reject(new Error('تعذر تجهيز معاينة الصورة الملتقطة.'));
+  image.src = canvas.toDataURL('image/png');
+});
+
+/**
+ * Applies supported `advanced` track constraints. If a browser rejects the
+ * combined set, each capability is retried alone so partial AE/AF support
+ * still benefits from the lock instead of failing the whole capture flow.
+ */
+const applyAdvancedTrackConstraints = async (
+  track: MediaStreamTrack,
+  constraints: ExtendedTrackConstraintSet,
+): Promise<string[]> => {
+  const keys = Object.keys(constraints).filter((key) => (
+    constraints[key as keyof ExtendedTrackConstraintSet] !== undefined
+  ));
+  if (keys.length === 0) return [];
+
+  try {
+    await track.applyConstraints({ advanced: [constraints] } as MediaTrackConstraints);
+    return keys;
+  } catch {
+    const applied: string[] = [];
+    for (const key of keys) {
+      const value = constraints[key as keyof ExtendedTrackConstraintSet];
+      if (value === undefined) continue;
+      try {
+        await track.applyConstraints({
+          advanced: [{ [key]: value }],
+        } as MediaTrackConstraints);
+        applied.push(key);
+      } catch {
+        // Capability is advertised but the device rejects this mode.
+      }
+    }
+    return applied;
+  }
+};
 
 interface OcularBiometryProps {
   hirschbergMM: number;
@@ -241,6 +340,24 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const previewRef = useRef<HTMLDivElement | null>(null);
   const hadRetakeRef = useRef(false);
   const lidWarningShownRef = useRef(false);
+  const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
+  const cameraCapabilitiesRef = useRef<ExtendedTrackCapabilities | null>(null);
+  const cameraLockedRef = useRef(false);
+  const stabilityMonitorRef = useRef<number | null>(null);
+  const stabilitySampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const burstActiveRef = useRef(false);
+  const stabilityTrackerRef = useRef<StabilityTracker>({
+    previous: null,
+    previousMean: 0,
+    smoothedMotion: 1,
+    stableSince: 0,
+    state: 'idle',
+    locked: false,
+    locking: false,
+    lockedAt: 0,
+    unstableStreak: 0,
+    lockSuppressedUntil: 0,
+  });
 
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
@@ -248,6 +365,9 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const [userImage, setUserImage] = useState<HTMLImageElement | null>(null);
   const [isShutterActive, setIsShutterActive] = useState(false);
+  const [stabilityState, setStabilityState] = useState<StabilityState>('idle');
+  const [cameraLockLabel, setCameraLockLabel] = useState('');
+  const [burstActive, setBurstActive] = useState(false);
 
   const [autoStatus, setAutoStatus] = useState<AutoStatus>('idle');
   const [autoMessage, setAutoMessage] = useState('');
@@ -293,6 +413,10 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   }, [hirschbergMM, mrd1MM, hirschbergRecorded, mrd1Recorded, setTriageOcularFlag]);
 
   useEffect(() => () => {
+    if (stabilityMonitorRef.current !== null) {
+      window.clearTimeout(stabilityMonitorRef.current);
+      stabilityMonitorRef.current = null;
+    }
     const video = videoRef.current;
     if (video?.srcObject) {
       const stream = video.srcObject as MediaStream;
@@ -300,16 +424,42 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     }
   }, []);
 
+  const stopStabilityMonitor = useCallback(() => {
+    if (stabilityMonitorRef.current !== null) {
+      window.clearTimeout(stabilityMonitorRef.current);
+      stabilityMonitorRef.current = null;
+    }
+    stabilitySampleCanvasRef.current = null;
+    stabilityTrackerRef.current = {
+      previous: null,
+      previousMean: 0,
+      smoothedMotion: 1,
+      stableSince: 0,
+      state: 'idle',
+      locked: false,
+      locking: false,
+      lockedAt: 0,
+      unstableStreak: 0,
+      lockSuppressedUntil: 0,
+    };
+    setStabilityState('idle');
+  }, []);
+
   const stopCamera = useCallback(() => {
+    stopStabilityMonitor();
     const video = videoRef.current;
     if (video?.srcObject) {
       const stream = video.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
       video.srcObject = null;
     }
+    cameraTrackRef.current = null;
+    cameraCapabilitiesRef.current = null;
+    cameraLockedRef.current = false;
+    setCameraLockLabel('');
     setCameraActive(false);
     setCameraError('');
-  }, []);
+  }, [stopStabilityMonitor]);
 
   /**
    * Applies HVID-normalized geometry to the two validated ocular fields.
@@ -361,6 +511,71 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     return { applied: true, mrdAvailable };
   }, [mrd1MM, mrd1Recorded, notify, setAIQualityFlag, setHirschbergMM, setHirschbergRecorded, setMrd1MM, setMrd1Recorded]);
 
+  const commitAnalysisResult = useCallback((
+    result: OcularFrameAnalysis,
+    options: { skipQuality?: boolean; burstCount?: number } = {},
+  ): boolean => {
+    const skipQuality = options.skipQuality ?? false;
+    const burstCount = options.burstCount ?? result.burstCount ?? 1;
+    const nextPoints = pointsFromAnalysis(result);
+    setAnalysis(result);
+    setAuditPoints(nextPoints);
+
+    // Quality gate: both checks run before any value is accepted.
+    if (!skipQuality && (result.isBlurred || result.hasGlare)) {
+      const message = result.isBlurred ? QUALITY_MESSAGE_BLUR : QUALITY_MESSAGE_GLARE;
+      setQualityState(result.isBlurred ? 'blur' : 'glare');
+      setQualityMessage(message);
+      setAutoStatus('error');
+      setAutoMessage(message);
+      setHirschbergRecorded(false);
+      setMrd1Recorded(false);
+      setAIQualityFlag(0);
+      notify(message, 'error');
+      return false;
+    }
+
+    setQualityState('clear');
+    setQualityMessage('');
+    const outcome = applyMetricsFromAudit(nextPoints, result, skipQuality);
+
+    if (!outcome.applied) {
+      setAutoStatus('error');
+      setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — اضغط على الصورة لتحديد النقاط يدوياً.');
+      setHirschbergRecorded(false);
+      setMrd1Recorded(false);
+      setAIQualityFlag(0);
+      notify('استخدم التحديد اليدوي على الصورة لتحديد الحدقة والانعكاس.', 'info');
+      return false;
+    }
+
+    setAutoStatus('done');
+    setAutoMessage(skipQuality
+      ? '⚡ تم تخطي الفحص التلقائي — اضبط النقاط يدوياً عند الحاجة.'
+      : burstCount > 1
+        ? !outcome.mrdAvailable
+          ? `✅ تم دمج ${burstCount} إطارات وحساب Hirschberg. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.`
+          : `✅ تم دمج ${burstCount} إطارات كاملة الدقة (متوسط مكاني) واعتماد القيم. راجعها قبل المتابعة.`
+        : !outcome.mrdAvailable
+          ? '✅ تم حساب Hirschberg تلقائياً. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.'
+          : hadRetakeRef.current
+            ? '✅ تم تحليل الصورة وإعادة ضبط القيم (محاولة ثانية).'
+            : '✅ تم تحليل الصورة تلقائياً واعتماد القيم. راجعها قبل المتابعة.');
+    notify(
+      burstCount > 1
+        ? `تم دمج ${burstCount} إطارات كاملة الدقة وتحديث القياسات البصرية. راجع القيم قبل المتابعة.`
+        : 'تم تحديث القياسات البصرية. راجع القيم قبل المتابعة.',
+      'success',
+    );
+    return true;
+  }, [
+    applyMetricsFromAudit,
+    notify,
+    setAIQualityFlag,
+    setHirschbergRecorded,
+    setMrd1Recorded,
+  ]);
+
   const runAutoDetection = useCallback((
     image: HTMLImageElement | null = userImage,
     skipQuality = false,
@@ -375,47 +590,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
     try {
       const result = analyzeOcularFrame(image);
-      const nextPoints = pointsFromAnalysis(result);
-      setAnalysis(result);
-      setAuditPoints(nextPoints);
-
-      // Quality gate: both checks run before any value is accepted.
-      if (!skipQuality && (result.isBlurred || result.hasGlare)) {
-        const message = result.isBlurred ? QUALITY_MESSAGE_BLUR : QUALITY_MESSAGE_GLARE;
-        setQualityState(result.isBlurred ? 'blur' : 'glare');
-        setQualityMessage(message);
-        setAutoStatus('error');
-        setAutoMessage(message);
-        setHirschbergRecorded(false);
-        setMrd1Recorded(false);
-        setAIQualityFlag(0);
-        notify(message, 'error');
-        return;
-      }
-
-      setQualityState('clear');
-      setQualityMessage('');
-      const outcome = applyMetricsFromAudit(nextPoints, result, skipQuality);
-
-      if (!outcome.applied) {
-        setAutoStatus('error');
-        setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — اضغط على الصورة لتحديد النقاط يدوياً.');
-        setHirschbergRecorded(false);
-        setMrd1Recorded(false);
-        setAIQualityFlag(0);
-        notify('استخدم التحديد اليدوي على الصورة لتحديد الحدقة والانعكاس.', 'info');
-        return;
-      }
-
-      setAutoStatus('done');
-      setAutoMessage(skipQuality
-        ? '⚡ تم تخطي الفحص التلقائي — اضبط النقاط يدوياً عند الحاجة.'
-        : !outcome.mrdAvailable
-          ? '✅ تم حساب Hirschberg تلقائياً. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.'
-          : hadRetakeRef.current
-            ? '✅ تم تحليل الصورة وإعادة ضبط القيم (محاولة ثانية).'
-            : '✅ تم تحليل الصورة تلقائياً واعتماد القيم. راجعها قبل المتابعة.');
-      notify('تم تحديث القياسات البصرية. راجع القيم قبل المتابعة.', 'success');
+      commitAnalysisResult(result, { skipQuality });
     } catch (error) {
       const message = error instanceof Error
         ? error.message
@@ -431,7 +606,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       notify(message, 'error');
     }
   }, [
-    applyMetricsFromAudit,
+    commitAnalysisResult,
     notify,
     setAIQualityFlag,
     setHirschbergRecorded,
@@ -445,6 +620,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setAuditPoints(emptyAuditPoints());
     setQualityState('idle');
     setQualityMessage('');
+    setBypassAuto(false);
     setAutoStatus('scanning');
     setAutoMessage('جارٍ تحليل جودة الصورة والنقاط التشريحية...');
     setAIQualityFlag(0);
@@ -454,8 +630,192 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     window.setTimeout(() => runAutoDetection(image), 60);
   }, [runAutoDetection, setAIQualityFlag, setHirschbergRecorded, setMrd1Recorded]);
 
+  const configureCameraTrack = useCallback(async (stream: MediaStream) => {
+    const track = stream.getVideoTracks()[0] ?? null;
+    cameraTrackRef.current = track;
+    cameraCapabilitiesRef.current = null;
+    cameraLockedRef.current = false;
+    setCameraLockLabel('');
+    if (!track) return;
+
+    let capabilities: ExtendedTrackCapabilities = {};
+    try {
+      capabilities = (track.getCapabilities?.() ?? {}) as ExtendedTrackCapabilities;
+    } catch {
+      capabilities = {};
+    }
+    cameraCapabilitiesRef.current = capabilities;
+
+    // Keep AE/AF/WB continuous while the examiner frames the child. The lock
+    // is applied only after the stability detector confirms a settled view.
+    const continuous: ExtendedTrackConstraintSet = {};
+    if (capabilities.focusMode?.includes('continuous')) continuous.focusMode = 'continuous';
+    if (capabilities.exposureMode?.includes('continuous')) continuous.exposureMode = 'continuous';
+    if (capabilities.whiteBalanceMode?.includes('continuous')) continuous.whiteBalanceMode = 'continuous';
+    if (Object.keys(continuous).length > 0) {
+      await applyAdvancedTrackConstraints(track, continuous);
+    }
+  }, []);
+
+  const setCameraLock = useCallback(async (locked: boolean): Promise<boolean> => {
+    const track = cameraTrackRef.current;
+    if (!track || track.readyState !== 'live') {
+      cameraLockedRef.current = false;
+      setCameraLockLabel('');
+      return false;
+    }
+    const capabilities = cameraCapabilitiesRef.current;
+    if (!capabilities) return false;
+
+    const constraints: ExtendedTrackConstraintSet = {};
+    if (locked) {
+      if (capabilities.focusMode?.includes('single-shot')) constraints.focusMode = 'single-shot';
+      else if (capabilities.focusMode?.includes('manual')) constraints.focusMode = 'manual';
+      if (capabilities.exposureMode?.includes('manual')) constraints.exposureMode = 'manual';
+      else if (capabilities.exposureMode?.includes('single-shot')) constraints.exposureMode = 'single-shot';
+    } else {
+      if (capabilities.focusMode?.includes('continuous')) constraints.focusMode = 'continuous';
+      if (capabilities.exposureMode?.includes('continuous')) constraints.exposureMode = 'continuous';
+    }
+
+    if (Object.keys(constraints).length === 0) {
+      cameraLockedRef.current = false;
+      setCameraLockLabel('');
+      return false;
+    }
+
+    const appliedKeys = await applyAdvancedTrackConstraints(track, constraints);
+    if (!locked) {
+      cameraLockedRef.current = false;
+      setCameraLockLabel('');
+      return appliedKeys.length > 0;
+    }
+
+    const focusLocked = appliedKeys.includes('focusMode');
+    const exposureLocked = appliedKeys.includes('exposureMode');
+    const label = focusLocked && exposureLocked ? 'AF/AE' : focusLocked ? 'AF' : exposureLocked ? 'AE' : '';
+    cameraLockedRef.current = Boolean(label);
+    setCameraLockLabel(label);
+    return Boolean(label);
+  }, []);
+
+  /**
+   * Frame-to-frame luminance differencing on a tiny 80×45 sample. It detects
+   * camera shake and exposure jumps without touching the full-resolution
+   * capture path, then locks AE/AF when the scene has been stable long enough.
+   */
+  const startStabilityMonitor = useCallback(() => {
+    stopStabilityMonitor();
+    const video = videoRef.current;
+    if (!video) return;
+
+    const sampleCanvas = document.createElement('canvas');
+    sampleCanvas.width = 80;
+    sampleCanvas.height = 45;
+    stabilitySampleCanvasRef.current = sampleCanvas;
+    const tracker = stabilityTrackerRef.current;
+    tracker.state = 'unstable';
+    tracker.smoothedMotion = 1;
+    setStabilityState('unstable');
+
+    function schedule() {
+      if (stabilitySampleCanvasRef.current !== sampleCanvas) return;
+      stabilityMonitorRef.current = window.setTimeout(tick, STABILITY_SAMPLE_MS);
+    }
+
+    function tick() {
+      stabilityMonitorRef.current = null;
+      const activeVideo = videoRef.current;
+      const canvas = stabilitySampleCanvasRef.current;
+      if (!activeVideo || !canvas) return;
+      if (activeVideo.readyState < 2 || activeVideo.videoWidth === 0) {
+        schedule();
+        return;
+      }
+
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) {
+        schedule();
+        return;
+      }
+
+      context.drawImage(activeVideo, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const luma = new Float32Array(canvas.width * canvas.height);
+      let sum = 0;
+      for (let index = 0, pixel = 0; index < pixels.length; index += 4, pixel += 1) {
+        const value = (0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2]) / 255;
+        luma[pixel] = value;
+        sum += value;
+      }
+      const mean = sum / luma.length;
+      const now = performance.now();
+      const state = stabilityTrackerRef.current;
+
+      if (state.previous && state.previous.length === luma.length) {
+        let absoluteDifference = 0;
+        for (let index = 0; index < luma.length; index += 1) {
+          absoluteDifference += Math.abs(luma[index] - state.previous[index]);
+        }
+        const frameDelta = absoluteDifference / luma.length;
+        const exposureDelta = Math.max(0, Math.abs(mean - state.previousMean) - 0.02);
+        const motion = frameDelta + exposureDelta * 0.8;
+        state.smoothedMotion = state.smoothedMotion * 0.55 + motion * 0.45;
+
+        const threshold = state.state === 'stable'
+          ? STABILITY_UNSTABLE_MOTION
+          : STABILITY_STABLE_MOTION;
+        const stableNow = state.smoothedMotion < threshold;
+
+        if (stableNow) {
+          state.unstableStreak = 0;
+          if (state.stableSince === 0) state.stableSince = now;
+          const settled = now - state.stableSince >= STABILITY_SETTLE_MS;
+          if (state.state !== 'stable' && settled && !burstActiveRef.current) {
+            state.state = 'stable';
+            setStabilityState('stable');
+            if (!state.locked && !state.locking && now >= state.lockSuppressedUntil) {
+              state.locking = true;
+              void setCameraLock(true).then((applied) => {
+                state.locking = false;
+                if (applied) {
+                  state.locked = true;
+                  state.lockedAt = performance.now();
+                } else {
+                  state.lockSuppressedUntil = performance.now() + CAMERA_LOCK_SUPPRESS_MS;
+                }
+              });
+            }
+          }
+        } else {
+          state.stableSince = 0;
+          state.unstableStreak += 1;
+          if (
+            state.state === 'stable'
+            && state.unstableStreak >= STABILITY_UNSTABLE_STREAK
+            && now - state.lockedAt >= CAMERA_LOCK_GRACE_MS
+          ) {
+            state.state = 'unstable';
+            setStabilityState('unstable');
+            if (state.locked) {
+              state.locked = false;
+              state.lockSuppressedUntil = now + CAMERA_LOCK_SUPPRESS_MS;
+              void setCameraLock(false);
+            }
+          }
+        }
+      }
+
+      state.previous = luma;
+      state.previousMean = mean;
+      schedule();
+    }
+
+    stabilityMonitorRef.current = window.setTimeout(tick, 40);
+  }, [setCameraLock, stopStabilityMonitor]);
+
   const startCamera = async (facing: 'user' | 'environment' = cameraFacingMode) => {
-    if (cameraStarting) return;
+    if (cameraStarting || burstActiveRef.current) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       const message = 'تعذر الوصول إلى الكاميرا على هذا المتصفح. استخدم زر رفع الصورة بدلاً منها.';
       setCameraError(message);
@@ -463,18 +823,28 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       return;
     }
 
+    stopStabilityMonitor();
     if (videoRef.current?.srcObject) {
       const existing = videoRef.current.srcObject as MediaStream;
       existing.getTracks().forEach((track) => track.stop());
       videoRef.current.srcObject = null;
     }
+    cameraTrackRef.current = null;
+    cameraCapabilitiesRef.current = null;
+    cameraLockedRef.current = false;
+    setCameraLockLabel('');
 
     setCameraStarting(true);
     setCameraError('');
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
       });
       const video = videoRef.current;
       if (!video) {
@@ -487,15 +857,22 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       video.srcObject = stream;
       video.setAttribute('playsinline', 'true');
       await video.play();
+      await configureCameraTrack(stream);
       setCameraActive(true);
       setCameraFacingMode(facing);
+      startStabilityMonitor();
     } catch {
+      stopStabilityMonitor();
       const video = videoRef.current;
       if (video?.srcObject) {
         const stream = video.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
         video.srcObject = null;
       }
+      cameraTrackRef.current = null;
+      cameraCapabilitiesRef.current = null;
+      cameraLockedRef.current = false;
+      setCameraLockLabel('');
       const message = 'تعذر فتح الكاميرا. تحقق من الصلاحيات أو استخدم رفع الصورة.';
       setCameraError(message);
       notify(message, 'error');
@@ -504,30 +881,83 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     }
   };
 
-  const capturePhoto = () => {
+  /**
+   * 3-frame full-resolution burst (0 / 150 / 300 ms). Each frame is analysed
+   * independently and the landmark coordinates are spatially median-fused.
+   */
+  const capturePhoto = async () => {
     const video = videoRef.current;
     if (!video || !video.videoWidth) {
       notify('انتظر ثانية حتى تبدأ معاينة الكاميرا.', 'info');
       return;
     }
+    if (burstActiveRef.current) return;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
+    burstActiveRef.current = true;
+    setBurstActive(true);
     setIsShutterActive(true);
-    window.setTimeout(() => setIsShutterActive(false), 200);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    window.setTimeout(() => setIsShutterActive(false), 220);
+    setAutoStatus('scanning');
+    setAutoMessage(`جارٍ التقاط ${BURST_FRAME_COUNT} إطارات كاملة الدقة ودمجها مكانياً...`);
 
-    const image = new Image();
-    image.src = canvas.toDataURL('image/png');
-    image.onload = () => {
+    try {
+      if (!cameraLockedRef.current) {
+        const lockedNow = await setCameraLock(true);
+        if (lockedNow) await waitFor(180);
+      }
+
+      const frames: HTMLCanvasElement[] = [];
+      for (let index = 0; index < BURST_FRAME_COUNT; index += 1) {
+        if (index > 0) await waitFor(BURST_INTERVAL_MS);
+        const frame = captureVideoFrame(video);
+        if (frame) frames.push(frame);
+      }
+      if (frames.length === 0) {
+        throw new Error('تعذر التقاط إطار صالح من الكاميرا. أعد المحاولة أو استخدم رفع الصورة.');
+      }
+
+      setAutoMessage(`جارٍ تحليل ${frames.length} إطارات واستخراج الحدقة والانعكاس...`);
+      await waitFor(0);
+      const analyses = frames.map((frame) => analyzeOcularFrame(frame));
+      const merged = mergeOcularAnalyses(analyses);
+      const sharpestIndex = analyses.reduce(
+        (bestIndex, current, index) => (
+          current.sharpness > analyses[bestIndex].sharpness ? index : bestIndex
+        ),
+        0,
+      );
+      const preview = await canvasToImage(frames[sharpestIndex]);
+
       stopCamera();
       if (userImage) hadRetakeRef.current = true;
-      processLoadedImage(image);
-    };
+      setBypassAuto(false);
+      setUserImage(preview);
+      setAnalysis(merged);
+      setAuditPoints(pointsFromAnalysis(merged));
+      setQualityState('idle');
+      setQualityMessage('');
+      setAIQualityFlag(0);
+      setHirschbergRecorded(false);
+      setMrd1Recorded(false);
+      lidWarningShownRef.current = false;
+      setAutoStatus('scanning');
+      setAutoMessage(`تم دمج ${frames.length} إطارات — جارٍ تطبيق بوابة الجودة...`);
+      await waitFor(0);
+      commitAnalysisResult(merged, { burstCount: frames.length });
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'تعذر التقاط الصورة. حاول مرة أخرى أو استخدم رفع الصورة.';
+      setAutoStatus('error');
+      setAutoMessage(message);
+      setQualityState('idle');
+      notify(message, 'error');
+    } finally {
+      setIsShutterActive(false);
+      burstActiveRef.current = false;
+      setBurstActive(false);
+      void setCameraLock(false);
+    }
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -797,6 +1227,25 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               <span className="capture-guide-label">
                 ضع وجه الطفل داخل الدائرتين — ابتعد 40–60 سم
               </span>
+              <div className="camera-status-cluster">
+                <span
+                  className={`stability-badge${stabilityState === 'stable' ? ' is-stable' : ' is-unstable'}${burstActive ? ' is-bursting' : ''}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {burstActive
+                    ? `⏺ جارٍ التقاط ${BURST_FRAME_COUNT} إطارات كاملة الدقة...`
+                    : stabilityState === 'stable'
+                      ? '🟢 ثابت وجاهز للتقاط'
+                      : '🔴 حرّك الهاتف بثبات...'}
+                </span>
+                {cameraLockLabel && (
+                  <span className="camera-lock-badge" title="تم تثبيت التركيز والتعرض لتقليل التغيّر أثناء الالتقاط">
+                    <Lock size={11} aria-hidden="true" />
+                    {cameraLockLabel} مقفول
+                  </span>
+                )}
+              </div>
               <span className="capture-hint">
                 <CheckCircle2 size={14} aria-hidden="true" />
                 حافظ على ثبات الكاميرا وأزل الانعكاسات المباشرة
@@ -848,19 +1297,31 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
         <div className="mt-3">
           <button
             type="button"
-            onClick={() => cameraActive ? capturePhoto() : startCamera()}
-            className="m3-btn m3-btn--primary m3-btn--block"
-            disabled={cameraStarting}
+            onClick={() => (cameraActive ? void capturePhoto() : void startCamera())}
+            className={`m3-btn m3-btn--primary m3-btn--block${cameraActive && stabilityState === 'stable' && !burstActive ? ' capture-ready' : ''}`}
+            disabled={cameraStarting || burstActive}
+            aria-busy={burstActive}
           >
-            <Camera size={20} aria-hidden="true" />
+            {burstActive ? <span className="capture-inline-spinner" aria-hidden="true" /> : <Camera size={20} aria-hidden="true" />}
             {cameraStarting
               ? 'جارٍ تشغيل الكاميرا…'
               : cameraActive
-                ? 'التقاط الصورة الآن'
+                ? burstActive
+                  ? `جارٍ دمج ${BURST_FRAME_COUNT} إطارات كاملة الدقة…`
+                  : stabilityState === 'stable'
+                    ? `التقاط ${BURST_FRAME_COUNT} إطارات (ثابت الآن)`
+                    : 'التقاط الصورة الآن'
                 : userImage
                   ? 'إعادة التصوير'
                   : 'فتح الكاميرا'}
           </button>
+
+          {cameraActive && !burstActive && (
+            <p className="capture-burst-note">
+              <Sparkles size={13} aria-hidden="true" />
+              يُلتقط ٣ إطارات خلال ٣٠٠ مللي ثانية بدقة المستشعر الكاملة ثم تُدمج مكانياً لإلغاء اهتزاز اليد.
+            </p>
+          )}
 
           <div className="flex flex-wrap gap-2 mt-2">
             <label className="m3-btn m3-btn--outline cursor-pointer flex-1">

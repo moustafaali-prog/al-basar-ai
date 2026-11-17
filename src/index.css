@@ -551,6 +551,48 @@ details.m3-details[open] > summary { border-bottom: 1px solid var(--m3-border); 
   padding: 7px 12px; border-radius: 999px; color: #e2e8f0; background: rgba(15, 23, 42, 0.76);
   font-size: 11px; font-weight: 600; text-align: center; white-space: nowrap;
 }
+.camera-status-cluster {
+  position: absolute; z-index: 7; top: 52px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: max-content; max-width: calc(100% - 24px); pointer-events: none;
+}
+.stability-badge {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 14px; border-radius: 999px; border: 1px solid rgba(248, 113, 113, 0.55);
+  color: #fee2e2; background: rgba(127, 29, 29, 0.88); font-size: 12px; font-weight: 900;
+  text-align: center; letter-spacing: 0.01em; backdrop-filter: blur(6px);
+  box-shadow: 0 12px 26px -16px rgba(0, 0, 0, 0.95);
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.stability-badge.is-stable {
+  color: #dcfce7; background: rgba(20, 83, 45, 0.92); border-color: rgba(74, 222, 128, 0.6);
+}
+.stability-badge.is-bursting {
+  color: #e0f2fe; background: rgba(7, 89, 133, 0.94); border-color: rgba(125, 211, 252, 0.6);
+}
+.camera-lock-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid rgba(56, 189, 248, 0.42);
+  color: #bae6fd; background: rgba(8, 47, 73, 0.86); font-size: 10px; font-weight: 800;
+}
+.capture-ready {
+  animation: captureReadyPulse 1.9s ease-in-out infinite;
+}
+.capture-ready:disabled { animation: none; }
+@keyframes captureReadyPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.24), 0 12px 24px -14px rgba(22, 163, 74, 0.75); }
+  50% { box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.42), 0 14px 28px -12px rgba(22, 163, 74, 0.9); }
+}
+.capture-inline-spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: #fff;
+  animation: captureSpin 0.8s linear infinite;
+}
+.capture-burst-note {
+  display: flex; align-items: flex-start; gap: 6px; margin-top: 8px;
+  color: var(--m3-muted); font-size: 11px; line-height: 1.6;
+}
+.capture-burst-note svg { flex-shrink: 0; margin-top: 2px; color: #0284c7; }
 .capture-empty { display: grid; place-items: center; gap: 8px; color: #94a3b8; text-align: center; padding: 28px; }
 .capture-empty svg { color: #cbd5e1; }
 .capture-empty strong { color: #e2e8f0; font-size: 14px; font-weight: 700; }
@@ -1369,6 +1411,9 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   .quick-pass-action strong { font-size: 12px; }
   .clinical-preset { min-height: 52px; }
   .capture-guide-label { font-size: 10px; padding: 6px 10px; white-space: normal; text-align: center; }
+  .camera-status-cluster { top: 50px; }
+  .stability-badge { font-size: 11px; padding: 6px 11px; }
+  .capture-burst-note { font-size: 10.5px; }
   .result-hero { padding: 16px; border-radius: 20px; }
   .result-hero__icon { width: 52px; height: 52px; border-radius: 16px; }
   .result-hero__copy h1 { font-size: 23px; }
