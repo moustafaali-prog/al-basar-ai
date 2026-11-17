@@ -1487,4 +1487,18 @@ export const TRAINING_CSS = String.raw`
     animation: none !important;
   }
 }
+
+.train-resources { padding: 22px 20px 26px; }
+.train-resources__head { margin-bottom: 16px; }
+.train-resources__head h3 { margin: 0 0 6px; font-size: 16px; font-weight: 900; }
+.train-resources__head p { margin: 0; color: var(--tr-muted); font-size: 12.5px; }
+.train-resources__grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.train-resource-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--tr-border); border-radius: 16px; background: #fff; text-align: right; text-decoration: none; color: inherit; transition: box-shadow 140ms ease, transform 140ms ease; }
+.train-resource-card:hover { box-shadow: 0 8px 22px -10px rgba(2, 12, 27, 0.28); transform: translateY(-1px); }
+.train-resource-card__emoji { font-size: 20px; line-height: 1; }
+.train-resource-card strong { display: block; font-size: 13px; font-weight: 800; }
+.train-resource-card small { display: block; color: var(--tr-muted); font-size: 11px; margin-top: 2px; }
+.train-resource-card--btn { cursor: pointer; }
+.train-resources__note { margin-top: 14px; font-size: 11.5px; color: var(--tr-muted); }
+
 `;

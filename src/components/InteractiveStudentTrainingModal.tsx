@@ -12,7 +12,7 @@ interface TrainingModalProps {
   onClose: () => void;
 }
 
-type TrainingMode = 'walkthrough' | 'scenarios';
+type TrainingMode = 'walkthrough' | 'scenarios' | 'resources';
 
 const scenarioNarration = (scenario: FieldScenario) =>
   `${scenario.title}. الموقف: ${scenario.situation} القاعدة: ${scenario.rule} التطبيق: ${scenario.click} ${scenario.tip}`;
@@ -390,6 +390,15 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
             >
               🧠 حالات ميدانية
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'resources'}
+              className={mode === 'resources' ? 'is-active' : ''}
+              onClick={() => setMode('resources')}
+            >
+              📚 مرجع الأدلة والروابط
+            </button>
           </div>
           {mode === 'scenarios' && (
             <div className="train-practice">
@@ -557,7 +566,7 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                 </div>
               </article>
             </>
-          ) : (
+          ) : mode === 'scenarios' ? (
             <div className="train-scenarios">
               <div className="train-scenarios__head">
                 <div className="train-scenarios__intro">
@@ -643,6 +652,55 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                   );
                 })}
               </div>
+            </div>
+          ) : (
+            <div className="train-resources">
+              <div className="train-resources__head">
+                <h3>مرجع الأدلة والروابط الرسمية</h3>
+                <p>كل شيء يعمل دون إنترنت بعد أول تحميل؛ الروابط تفتح عند توفر الشبكة.</p>
+              </div>
+              <div className="train-resources__grid">
+                <a className="train-resource-card" href="https://iris.who.int/handle/10665/375590" target="_blank" rel="noopener noreferrer">
+                  <span className="train-resource-card__emoji">🌐</span>
+                  <div>
+                    <strong>WHO 2025 Vision Screening Implementation Handbook</strong>
+                    <small>الدليل الرسمي لمنظمة الصحة العالمية للفحص المدرسي للبصر 2025</small>
+                  </div>
+                </a>
+                <a className="train-resource-card" href="https://www.equator-network.org/reporting-guidelines/spirit-ai/" target="_blank" rel="noopener noreferrer">
+                  <span className="train-resource-card__emoji">📄</span>
+                  <div>
+                    <strong>EQUATOR SPIRIT-AI</strong>
+                    <small>إرشادات التقرير للبحوث السريرية المدعومة بالذكاء الاصطناعي</small>
+                  </div>
+                </a>
+                <a className="train-resource-card" href="https://www.equator-network.org/reporting-guidelines/stard-ai/" target="_blank" rel="noopener noreferrer">
+                  <span className="train-resource-card__emoji">🔬</span>
+                  <div>
+                    <strong>EQUATOR STARD-AI</strong>
+                    <small>معايير تقرير دراسات الدقة التشخيصية بالذكاء الاصطناعي</small>
+                  </div>
+                </a>
+                <button className="train-resource-card train-resource-card--btn" onClick={() => { const a=document.createElement('a'); a.href='./guide.html'; a.download='Al-Basar-Field-Guide.html'; a.click(); }}>
+                  <span className="train-resource-card__emoji">📖</span>
+                  <div>
+                    <strong>دليل الميدان الطلابي</strong>
+                    <small>تحميل نسخة HTML قابلة للطباعة للمراجعة داخل المدرسة</small>
+                  </div>
+                </button>
+                <button className="train-resource-card train-resource-card--btn" onClick={() => {
+                  const blob = new Blob([JSON.stringify({offline:'Al-Basar v3 offline package placeholder', version:'v3'},null,2)], {type:'application/json'});
+                  const url = URL.createObjectURL(blob);
+                  const a=document.createElement('a'); a.href=url; a.download='albasar-offline-package.json'; a.click(); URL.revokeObjectURL(url);
+                }}>
+                  <span className="train-resource-card__emoji">📦</span>
+                  <div>
+                    <strong>حزمة عدم الاتصال Offline</strong>
+                    <small>نسخة احتياطية محلية للتثبيت دون إنترنت</small>
+                  </div>
+                </button>
+              </div>
+              <p className="train-resources__note">التطبيق PWA يخزّن واجهة التدريب والمواد الثابتة في Service Worker ليتم الوصول لها بدون شبكة داخل المدارس.</p>
             </div>
           )}
         </div>
