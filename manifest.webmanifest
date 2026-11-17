@@ -8,9 +8,11 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#f3f7f8",
   "theme_color": "#123c57",
+  "prefer_related_applications": false,
   "categories": ["medical", "education", "health"],
   "icons": [
     {
