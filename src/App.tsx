@@ -228,6 +228,7 @@ export default function App() {
   const [cloudUser, setCloudUser] = useState<CloudAuthUser | null>(null);
   const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
   const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(isSupabaseConfigured());
+  const [showCloudBanner, setShowCloudBanner] = useState<boolean>(true);
   const pendingCloudSync = useRef(false);
 
   useEffect(() => {
@@ -239,6 +240,19 @@ export default function App() {
       window.removeEventListener('offline', updateOnline);
     };
   }, []);
+
+  // Auto-sync pending records when coming online and authenticated
+  useEffect(() => {
+    if (!isOnline) return;
+    if (!isSupabaseConfigured() || !cloudAuthReady) return;
+    if (!cloudUser) return;
+    const hasPending = records.some(r => r._syncStatus !== 'synced');
+    if (!hasPending) return;
+    const t = setTimeout(() => {
+      void syncLocalRecordsToCloud();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [isOnline, cloudUser?.id, cloudAuthReady]);
 
   // Initialise cloud auth lazily after first paint — it does not block the offline-first UI.
   useEffect(() => {
@@ -365,7 +379,6 @@ export default function App() {
     gold_standard_masked: r.Gold_Standard_Masked ?? null,
     eye_photo_url: r.Eye_Photo_URL ?? null,
     examination_date: r.Examination_Date,
-    created_at: r.Examination_Date,
   });
 
   const syncLocalRecordsToCloud = async () => {
@@ -396,6 +409,7 @@ export default function App() {
       let syncedCount = 0;
       const syncedIds = new Set<string>();
       let authFailure = false;
+      const errors: string[] = [];
 
       for (const rec of pending) {
         let payload = mapRecordToSupabase(rec);
@@ -428,6 +442,7 @@ export default function App() {
           console.error('Supabase upsert error', rec.Child_ID, error);
           const status = (error as { status?: number }).status;
           const message = (error as { message?: string }).message ?? '';
+          errors.push(`${rec.Child_ID}: ${message}`);
           if (status === 401 || /jwt|session|permission denied|row-level security/i.test(message)) {
             authFailure = true;
           }
@@ -446,7 +461,8 @@ export default function App() {
           failedCount > 0 ? 'info' : 'success'
         );
       } else {
-        notify('فشلت المزامنة؛ تحقق من الاتصال وسجل Supabase.', 'error');
+        const firstErr = errors[0] ?? 'خطأ غير معروف';
+        notify(`فشلت المزامنة: ${firstErr}. تحقق من الاتصال وسجل Supabase.`, 'error');
       }
 
       if (authFailure && syncedCount === 0) {
@@ -457,6 +473,113 @@ export default function App() {
     } catch (e) {
       console.error(e);
       notify('خطأ أثناء المزامنة مع السحابة.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const pullLatestFromCloud = async () => {
+    if (!isOnline) {
+      notify('وضع العمل بدون إنترنت. لا يمكن سحب أحدث السجلات.', 'info');
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      notify('سحابة المشرف غير مُعدة.', 'info');
+      return;
+    }
+    if (!cloudUser) {
+      notify('يجب تسجيل الدخول لسحب السجلات من السحابة.', 'error');
+      setCloudLoginOpen(true);
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const { getSupabaseClient } = await import('./utils/supabaseClient');
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Supabase client not available');
+      // Supervisor can read all, examiner reads own owner_id
+      let query = client.from('student_screening_records').select('*');
+      // Note: RLS will enforce read access; no need for manual filter
+      const { data, error } = await query;
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        notify('لا توجد سجلات في السحابة.', 'info');
+        setIsSyncing(false);
+        return;
+      }
+      const mapSupabaseToRecord = (row: any): StudentScreeningRecord => ({
+        Child_ID: row.child_id,
+        Examiner_ID: row.examiner_id,
+        Paper_Examiner_ID: row.paper_examiner_id,
+        Paper_Started_At: row.paper_started_at,
+        Paper_Completed_At: row.paper_completed_at,
+        Smart_Examiner_ID: row.smart_examiner_id,
+        Smart_Started_At: row.smart_started_at,
+        Smart_Completed_At: row.smart_completed_at,
+        Parental_Consent: row.parental_consent,
+        Child_Assent: row.child_assent,
+        School_Name: row.school_name,
+        School_Sector: row.school_sector,
+        Grade_Level: row.grade_level,
+        Age_Years: row.age_years,
+        Gender: row.gender,
+        Wears_Glasses: row.wears_glasses,
+        WHO_PreScreen: row.who_pre_screen,
+        WHO_Screening: row.who_screening,
+        WHO_Referral_Flag: row.who_referral_flag,
+        Crossover_Sequence: row.crossover_sequence,
+        Paper_Snellen_OD: row.paper_snellen_od,
+        Paper_LogMAR_OD: row.paper_logmar_od,
+        Paper_Snellen_OS: row.paper_snellen_os,
+        Paper_LogMAR_OS: row.paper_logmar_os,
+        Paper_LogMAR_Worse: row.paper_logmar_worse,
+        Paper_Time_Sec: row.paper_time_sec,
+        Paper_Referral: row.paper_referral,
+        Smart_Snellen_OD: row.smart_snellen_od,
+        Smart_Acuity_OD_Below_Test_Range: row.smart_acuity_od_below_test_range,
+        Smart_LogMAR_OD: row.smart_logmar_od,
+        Smart_Snellen_OS: row.smart_snellen_os,
+        Smart_Acuity_OS_Below_Test_Range: row.smart_acuity_os_below_test_range,
+        Smart_LogMAR_OS: row.smart_logmar_os,
+        Smart_LogMAR_Worse: row.smart_logmar_worse,
+        Smart_IOD_LogMAR: row.smart_iod_logmar,
+        Smart_Time_Sec: row.smart_time_sec,
+        Hirschberg_Asym_mm: row.hirschberg_asym_mm,
+        Hirschberg_Prism_Diopters: row.hirschberg_prism_diopters,
+        MRD1_Min_mm: row.mrd1_min_mm,
+        Triage_Ocular_Flag: row.triage_ocular_flag,
+        AI_Quality_Flag: row.ai_quality_flag,
+        Asthenopia_Score: row.asthenopia_score,
+        Final_Triage_Referral: row.final_triage_referral,
+        Referral_Urgency: row.referral_urgency,
+        Referral_PHCC: row.referral_phcc,
+        FollowUp_Status: row.follow_up_status,
+        Spectacles_Prescribed_Fitted: row.spectacles_prescribed_fitted,
+        Gold_Standard_Confirmed: row.gold_standard_confirmed,
+        Gold_Standard_Method: row.gold_standard_method,
+        Gold_Standard_Examiner_ID: row.gold_standard_examiner_id,
+        Gold_Standard_Date: row.gold_standard_date,
+        Gold_Standard_Criteria: row.gold_standard_criteria,
+        Gold_Standard_Masked: row.gold_standard_masked,
+        Eye_Photo_URL: row.eye_photo_url,
+        Examination_Date: row.examination_date,
+        _syncStatus: 'synced' as const,
+      });
+      const incoming = data.map(mapSupabaseToRecord);
+      const merged = [...records];
+      for (const rec of incoming) {
+        const idx = merged.findIndex(r => r.Child_ID === rec.Child_ID);
+        if (idx >= 0) {
+          merged[idx] = rec;
+        } else {
+          merged.push(rec);
+        }
+      }
+      if (persistRecords(merged)) setRecords(merged);
+      notify(`تم سحب ${incoming.length} سجل من السحابة ودمجها محلياً.`, 'success');
+    } catch (e) {
+      console.error(e);
+      notify('فشل سحب السجلات من السحابة.', 'error');
     } finally {
       setIsSyncing(false);
     }
@@ -1025,6 +1148,19 @@ export default function App() {
               <span aria-hidden="true">⚙️</span>
               <span className="topbar__quick-label topbar__quick-label--admin">لوحة المشرف والبيانات</span>
             </button>
+            {isSupabaseConfigured() && (
+              <button
+                type="button"
+                onClick={() => setCloudLoginOpen(true)}
+                className="topbar__quick topbar__quick--cloud"
+                aria-label="السحابة وتسجيل الدخول"
+                title="السحابة وتسجيل الدخول"
+              >
+                <span aria-hidden="true">☁️</span>
+                <span className="topbar__quick-label">السحابة / تسجيل الدخول</span>
+                <span className="topbar__quick-label topbar__quick-label--short">السحابة</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1102,6 +1238,18 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {isSupabaseConfigured() && isOnline && !cloudUser && showCloudBanner && (
+        <div className="cloud-banner" dir="rtl">
+          <span>☁️ لمزامنة سجلات الفحص تلقائياً مع قاعدة بيانات المشرف، اضغط هنا لتسجيل الدخول أو تفعيل المزامنة السحابية (أو تابع العمل أوفلاين محلياً).</span>
+          <div className="cloud-banner__actions">
+            <button className="m3-btn m3-btn--primary m3-btn--sm" onClick={() => { setCloudLoginOpen(true); setShowCloudBanner(false); }}>
+              تسجيل الدخول
+            </button>
+            <button className="m3-btn m3-btn--ghost m3-btn--sm" onClick={() => setShowCloudBanner(false)}>إخفاء</button>
+          </div>
+        </div>
+      )}
 
       <div className="step-indicator">
         <div className="step-indicator__track">
@@ -1354,6 +1502,7 @@ export default function App() {
                   onUpdateRecord={handleUpdateRecord}
                   onImportRecords={handleImportRecords}
                   onClearRecords={handleClearRecords}
+                  onPullLatest={pullLatestFromCloud}
                 />
               )}
               {adminPanel === 'sus' && <NurseSUSScale />}
