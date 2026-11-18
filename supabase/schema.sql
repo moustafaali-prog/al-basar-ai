@@ -137,3 +137,8 @@ create policy "albasar anon select"
   for select
   to anon
   using (true);
+
+-- Table privileges are separate from RLS policies. Without these GRANTs the
+-- Data API returns "permission denied for table" even when policies exist.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update on public.student_screening_records to anon, authenticated;
