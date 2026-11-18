@@ -149,6 +149,64 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--m3-primary); w
 }
 .topbar__quick-label--short { display: none; }
 
+/* ---------- Cloud sync status ---------- */
+.sync-status-bar {
+  background: linear-gradient(180deg, #f7faff 0%, #eef4fd 100%);
+  border-bottom: 1px solid var(--m3-border);
+}
+.sync-status-bar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: min(1240px, 100%);
+  margin-inline: auto;
+  padding: 8px clamp(12px, 3vw, 28px);
+}
+.sync-status-bar__net { display: flex; align-items: center; min-width: 0; }
+.sync-status__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.sync-status__pill--online { background: #e6f6ee; border-color: #b7e4cd; color: #0f6b3c; }
+.sync-status__pill--offline { background: #fdeaea; border-color: #f5c2c0; color: #a51d18; }
+.sync-status__sub { font-weight: 600; opacity: 0.85; }
+.sync-status__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #b8cdf5;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--m3-primary);
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, opacity 150ms ease;
+}
+.sync-status__btn:hover:not(:disabled) { background: var(--m3-primary-soft); border-color: var(--m3-primary); }
+.sync-status__btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.spin { animation: albasar-spin 900ms linear infinite; }
+@keyframes albasar-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 560px) {
+  .sync-status-bar__inner { gap: 8px; }
+  .sync-status__btn { width: 100%; min-height: 40px; }
+  .sync-status__pill { font-size: 10.5px; }
+}
+
 @media (max-width: 760px) {
   .topbar__quick { min-height: 38px; padding: 0 11px; font-size: 11.5px; }
   .topbar__quick-label--admin { display: none; }

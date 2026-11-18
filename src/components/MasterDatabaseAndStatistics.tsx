@@ -40,6 +40,7 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
   const importInputRef = useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterUrgency, setFilterUrgency] = useState<string>('ALL');
+  const [filterSync, setFilterSync] = useState<'ALL' | 'pending' | 'synced'>('ALL');
   const [showMatrices, setShowMatrices] = useState(false);
   const [editingGoldRecord, setEditingGoldRecord] = useState<StudentScreeningRecord | null>(null);
   const [goldStatus, setGoldStatus] = useState<'99' | '1' | '0'>('99');
@@ -60,11 +61,15 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
       (r.Examiner_ID ?? '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchUrgency =
       filterUrgency === 'ALL' || r.Referral_Urgency === filterUrgency;
-    return matchSearch && matchUrgency;
+    const matchSync =
+      filterSync === 'ALL' || (r._syncStatus ?? 'pending') === filterSync;
+    return matchSearch && matchUrgency && matchSync;
   });
 
   // Calculate live statistical & diagnostic indicators
   const metrics = calculateDiagnosticMetrics(records);
+  const pendingSyncCount = records.filter((r) => (r._syncStatus ?? 'pending') === 'pending').length;
+  const syncedCount = records.length - pendingSyncCount;
   const referredCount = records.filter((r) => r.Final_Triage_Referral === 1 || String(r.Final_Triage_Referral) === '1').length;
   const referralRate = metrics.totalN > 0 ? Math.round((referredCount / metrics.totalN) * 100) : 0;
 
@@ -481,12 +486,12 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
             />
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <Filter className="w-4 h-4 text-slate-400" />
             <select
               value={filterUrgency}
               onChange={(e) => setFilterUrgency(e.target.value)}
-              className="text-xs px-3 py-2 border border-slate-300 rounded-xl bg-white focus:outline-none"
+              className="text-xs px-3 py-2 border border-slate-300 rounded-xl bg-white focus:outline-none min-w-0 flex-1 sm:flex-none"
             >
               <option value="ALL">كافة مستويات الإحالة</option>
               <option value="MODEL_NO_FLAG">لا توجد إشارة (النموذج)</option>
@@ -495,6 +500,16 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
               <option value="ROUTINE">سجل سابق: ROUTINE</option>
               <option value="PHCC_2WEEKS">سجل سابق: PHCC_2WEEKS</option>
               <option value="URGENT_48H">سجل سابق: URGENT_48H</option>
+            </select>
+            <select
+              value={filterSync}
+              onChange={(e) => setFilterSync(e.target.value as 'ALL' | 'pending' | 'synced')}
+              className="text-xs px-3 py-2 border border-slate-300 rounded-xl bg-white focus:outline-none min-w-0 flex-1 sm:flex-none"
+              aria-label="تصفية حسب حالة المزامنة"
+            >
+              <option value="ALL">كل حالات المزامنة</option>
+              <option value="pending">بانتظار المزامنة</option>
+              <option value="synced">تمت مزامنتها</option>
             </select>
           </div>
         </div>
@@ -506,6 +521,7 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
               <thead className="bg-slate-100 text-slate-700 sticky top-0 z-10 border-b border-slate-200">
                 <tr>
                   <th className="py-2.5 px-3 font-bold">كود التلميذ</th>
+                  <th className="py-2.5 px-3 font-bold">المزامنة</th>
                   <th className="py-2.5 px-3 font-bold">الفاحص</th>
                   <th className="py-2.5 px-3 font-bold">الموافقة</th>
                   <th className="py-2.5 px-3 font-bold">التسلسل</th>
@@ -523,7 +539,7 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
               <tbody className="divide-y divide-slate-100 text-slate-700 font-mono">
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={13} className="py-8 text-center text-slate-400 font-sans">
+                    <td colSpan={14} className="py-8 text-center text-slate-400 font-sans">
                       لا توجد سجلات مطابقة للبحث حالياً.
                     </td>
                   </tr>
@@ -531,6 +547,18 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
                   filtered.map((record) => (
                     <tr key={record.Child_ID} className="hover:bg-blue-50/40 transition">
                       <td className="py-2 px-3 font-bold text-blue-900">{record.Child_ID}</td>
+                      <td className="py-2 px-3">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-bold ${
+                            (record._syncStatus ?? 'pending') === 'synced'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                          title={(record._syncStatus ?? 'pending') === 'synced' ? 'تمت المزامنة مع سحابة المشرف' : 'بانتظار المزامنة'}
+                        >
+                          {(record._syncStatus ?? 'pending') === 'synced' ? '☁️ تمت' : '⏳ بانتظار'}
+                        </span>
+                      </td>
                       <td className="py-2 px-3">{record.Examiner_ID}</td>
                       <td className="py-2 px-3">
                         <span
@@ -623,8 +651,12 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
         </div>
 
         <div className="mt-4 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-2">
-          <span>ملف CSV مرمّز بـ UTF-8؛ راجع قاموس المتغيرات وإعدادات الاستيراد قبل التحليل.</span>
-          <span>إجمالي السجلات: {records.length}</span>
+          <span>ملف CSV مرمّز بـ UTF-8 (BOM)؛ راجع قاموس المتغيرات وإعدادات الاستيراد قبل التحليل.</span>
+          <span className="flex flex-wrap items-center justify-center gap-3">
+            <span>إجمالي السجلات: {records.length}</span>
+            <span className="text-amber-700">⏳ بانتظار المزامنة: {pendingSyncCount}</span>
+            <span className="text-emerald-700">☁️ تمت مزامنتها: {syncedCount}</span>
+          </span>
         </div>
       </div>
 

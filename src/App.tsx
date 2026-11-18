@@ -11,8 +11,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  RefreshCw,
   Sparkles,
   UserCheck,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 import {
@@ -52,6 +55,7 @@ import { NurseSUSScale } from './components/NurseSUSScale';
 import { MethodologyAndGoldStandardModal } from './components/MethodologyAndGoldStandardModal';
 import { InteractiveStudentTrainingModal } from './components/InteractiveStudentTrainingModal';
 import { useFeedback } from './components/FeedbackProvider';
+import { isSupabaseConfigured } from './utils/supabaseConfig';
 
 type ClinicalStepId = 'protocol' | 'acuity' | 'biometry' | 'cdss';
 type ActiveTab = ClinicalStepId;
@@ -211,6 +215,19 @@ export default function App() {
     return [];
   });
 
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  useEffect(() => {
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+    return () => {
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
+
   useEffect(() => {
     setLastClinicalTab(activeTab);
   }, [activeTab]);
@@ -250,8 +267,121 @@ export default function App() {
     }
   };
 
+  const mapRecordToSupabase = (r: StudentScreeningRecord) => ({
+    child_id: r.Child_ID,
+    examiner_id: r.Examiner_ID,
+    paper_examiner_id: r.Paper_Examiner_ID ?? null,
+    paper_started_at: r.Paper_Started_At ?? null,
+    paper_completed_at: r.Paper_Completed_At ?? null,
+    smart_examiner_id: r.Smart_Examiner_ID ?? null,
+    smart_started_at: r.Smart_Started_At ?? null,
+    smart_completed_at: r.Smart_Completed_At ?? null,
+    parental_consent: r.Parental_Consent,
+    child_assent: r.Child_Assent ?? null,
+    school_name: r.School_Name,
+    school_sector: r.School_Sector,
+    grade_level: r.Grade_Level,
+    age_years: r.Age_Years,
+    gender: r.Gender,
+    wears_glasses: r.Wears_Glasses,
+    who_pre_screen: r.WHO_PreScreen ?? null,
+    who_screening: r.WHO_Screening ?? null,
+    who_referral_flag: r.WHO_Referral_Flag ?? null,
+    crossover_sequence: r.Crossover_Sequence,
+    paper_snellen_od: r.Paper_Snellen_OD,
+    paper_logmar_od: r.Paper_LogMAR_OD,
+    paper_snellen_os: r.Paper_Snellen_OS,
+    paper_logmar_os: r.Paper_LogMAR_OS,
+    paper_logmar_worse: r.Paper_LogMAR_Worse ?? null,
+    paper_time_sec: r.Paper_Time_Sec,
+    paper_referral: r.Paper_Referral,
+    smart_snellen_od: r.Smart_Snellen_OD,
+    smart_acuity_od_below_test_range: r.Smart_Acuity_OD_Below_Test_Range ?? null,
+    smart_logmar_od: r.Smart_LogMAR_OD,
+    smart_snellen_os: r.Smart_Snellen_OS,
+    smart_acuity_os_below_test_range: r.Smart_Acuity_OS_Below_Test_Range ?? null,
+    smart_logmar_os: r.Smart_LogMAR_OS,
+    smart_logmar_worse: r.Smart_LogMAR_Worse ?? null,
+    smart_iod_logmar: r.Smart_IOD_LogMAR,
+    smart_time_sec: r.Smart_Time_Sec,
+    hirschberg_asym_mm: r.Hirschberg_Asym_mm,
+    hirschberg_prism_diopters: r.Hirschberg_Prism_Diopters,
+    mrd1_min_mm: r.MRD1_Min_mm,
+    triage_ocular_flag: r.Triage_Ocular_Flag,
+    ai_quality_flag: r.AI_Quality_Flag ?? null,
+    asthenopia_score: r.Asthenopia_Score,
+    final_triage_referral: r.Final_Triage_Referral,
+    referral_urgency: r.Referral_Urgency,
+    referral_phcc: r.Referral_PHCC,
+    follow_up_status: r.FollowUp_Status,
+    spectacles_prescribed_fitted: r.Spectacles_Prescribed_Fitted ?? null,
+    gold_standard_confirmed: r.Gold_Standard_Confirmed ?? 99,
+    gold_standard_method: r.Gold_Standard_Method ?? null,
+    gold_standard_examiner_id: r.Gold_Standard_Examiner_ID ?? null,
+    gold_standard_date: r.Gold_Standard_Date ?? null,
+    gold_standard_criteria: r.Gold_Standard_Criteria ?? null,
+    gold_standard_masked: r.Gold_Standard_Masked ?? null,
+    examination_date: r.Examination_Date,
+    created_at: r.Examination_Date,
+  });
+
+  const syncLocalRecordsToCloud = async () => {
+    if (!isOnline) {
+      notify('وضع العمل بدون إنترنت. المزامنة متاحة عند الاتصال.', 'info');
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      notify('سحابة المشرف غير مُعدة. سجّل VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY.', 'info');
+      return;
+    }
+    const { getSupabaseClient } = await import('./utils/supabaseClient');
+    const client = getSupabaseClient();
+    if (!client) {
+      notify('تعذر تهيئة عميل Supabase.', 'error');
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const pending = records.filter(r => r._syncStatus !== 'synced');
+      if (pending.length === 0) {
+        notify('لا توجد سجلات بانتظار المزامنة.', 'success');
+        setIsSyncing(false);
+        return;
+      }
+      let syncedCount = 0;
+      const syncedIds = new Set<string>();
+      for (const rec of pending) {
+        const payload = mapRecordToSupabase(rec);
+        const { error } = await client.from('student_screening_records').upsert(payload, { onConflict: 'child_id' });
+        if (error) {
+          console.error('Supabase upsert error', rec.Child_ID, error);
+          continue;
+        }
+        syncedIds.add(rec.Child_ID);
+        syncedCount++;
+      }
+      if (syncedCount > 0) {
+        const next = records.map(r => syncedIds.has(r.Child_ID) ? { ...r, _syncStatus: 'synced' as const } : r);
+        if (persistRecords(next)) setRecords(next);
+        const failedCount = pending.length - syncedCount;
+        notify(
+          `تمت مزامنة ${syncedCount} سجل مع سحابة المشرف.${failedCount > 0 ? ` تعذر مزامنة ${failedCount} سجل؛ سيبقى محلياً للمحاولة لاحقاً.` : ''}`,
+          failedCount > 0 ? 'info' : 'success'
+        );
+      } else {
+        notify('فشلت المزامنة؛ تحقق من الاتصال وسجل Supabase.', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      notify('خطأ أثناء المزامنة مع السحابة.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleUpdateRecord = (updated: StudentScreeningRecord) => {
-    const updatedList = records.map((r) => (r.Child_ID === updated.Child_ID ? updated : r));
+    const pendingRecord: StudentScreeningRecord = { ...updated, _syncStatus: 'pending' };
+    const updatedList = records.map((r) => (r.Child_ID === updated.Child_ID ? pendingRecord : r));
     if (!persistRecords(updatedList)) return;
     setRecords(updatedList);
   };
@@ -262,7 +392,10 @@ export default function App() {
       notify(`تغيرت البيانات أثناء مراجعة الملف؛ أُلغي الدمج بسبب تعارض المعرفات: ${analysis.conflicts.slice(0, 5).join('، ')}.`, 'error');
       return;
     }
-    const updated = [...analysis.additions, ...records];
+    const updated = [
+      ...analysis.additions.map(r => ({ ...r, _syncStatus: 'pending' as const })),
+      ...records,
+    ];
     if (!persistRecords(updated)) return;
     setRecords(updated);
     notify(`اكتمل الدمج: أضيف ${analysis.additions.length} سجل محلياً.`, 'success');
@@ -410,6 +543,7 @@ export default function App() {
     const newRecord: StudentScreeningRecord = {
       Child_ID: childId.trim() || 'BAB-Unknown',
       Examiner_ID: examinerId.trim(),
+      _syncStatus: 'pending',
       Paper_Examiner_ID: paperExaminerId.trim(),
       Paper_Started_At: paperStartedAt,
       Paper_Completed_At: paperCompletedAt,
@@ -751,6 +885,40 @@ export default function App() {
             >
               <span aria-hidden="true">⚙️</span>
               <span className="topbar__quick-label topbar__quick-label--admin">لوحة المشرف والبيانات</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="sync-status-bar" dir="rtl">
+          <div className="sync-status-bar__inner">
+            <div className="sync-status-bar__net">
+              {isOnline ? (
+                <span className="sync-status__pill sync-status__pill--online">
+                  <Wifi size={16} aria-hidden="true" />
+                  <span>🟢 متصل بالإنترنت</span>
+                  {!isSupabaseConfigured() ? (
+                    <span className="sync-status__sub"> - سحابة المشرف غير مهيأة</span>
+                  ) : records.some(r => r._syncStatus !== 'synced') ? (
+                    <span className="sync-status__sub"> - بانتظار المزامنة</span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="sync-status__pill sync-status__pill--offline">
+                  <WifiOff size={16} aria-hidden="true" />
+                  <span>🔴 وضع العمل بدون إنترنت</span>
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="sync-status__btn"
+              onClick={syncLocalRecordsToCloud}
+              disabled={!isOnline || isSyncing}
+              title={!isSupabaseConfigured() ? 'سجّل VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY أولاً' : undefined}
+              aria-busy={isSyncing}
+            >
+              <RefreshCw size={16} className={isSyncing ? 'spin' : ''} aria-hidden="true" />
+              <span>{isSyncing ? 'جاري المزامنة…' : '🔄 مزامنة السجلات مع سحابة المشرف'}</span>
             </button>
           </div>
         </div>

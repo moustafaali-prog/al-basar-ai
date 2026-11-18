@@ -46,6 +46,9 @@ export interface WHOScreeningAssessment {
 export interface StudentScreeningRecord {
   Child_ID: string;
   Examiner_ID: string;
+  /** Optional local sync metadata; not persisted to Supabase. */
+  _syncStatus?: 'pending' | 'synced';
+
   /** Independent station identities and completion times; optional for older records. */
   Paper_Examiner_ID?: string;
   Paper_Started_At?: string;
