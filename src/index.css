@@ -1875,3 +1875,35 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   color: var(--m3-muted);
   text-align: center;
 }
+
+/* ---------- Mandatory auth gate ---------- */
+.auth-gate {
+  min-height: 100dvh;
+  display: grid; place-items: center;
+  background: radial-gradient(1200px 600px at 50% -10%, #e8f0fe 0%, #f8fafc 40%, #ffffff 100%);
+  padding: 24px;
+}
+.auth-gate__card {
+  width: min(420px, 92vw);
+  padding: 28px;
+  border-radius: 24px;
+  background: var(--m3-surface);
+  border: 1px solid var(--m3-border);
+  box-shadow: 0 24px 80px -20px rgba(15,23,42,.35);
+  text-align: center;
+}
+.auth-gate__icon {
+  display: grid; place-items: center;
+  width: 56px; height: 56px; margin: 0 auto 14px;
+  border-radius: 16px;
+  background: var(--m3-primary-soft);
+  color: var(--m3-primary);
+}
+.auth-gate__card h2 {
+  margin: 4px 0 8px;
+  font-size: 20px; font-weight: 800; color: var(--m3-text);
+}
+.auth-gate__card p {
+  margin: 0 0 20px;
+  color: var(--m3-muted); font-size: 13.5px; line-height: 1.7;
+}

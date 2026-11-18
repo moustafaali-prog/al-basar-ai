@@ -14,6 +14,7 @@ import {
   LogIn,
   LogOut,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   UserCheck,
   UserRound,
@@ -223,10 +224,10 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Cloud auth (authenticated sync only). Local screening never requires it.
+  // Cloud auth mandatory gate
   const [cloudUser, setCloudUser] = useState<CloudAuthUser | null>(null);
   const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
-  const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(false);
+  const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(isSupabaseConfigured());
   const pendingCloudSync = useRef(false);
 
   useEffect(() => {
@@ -967,6 +968,30 @@ export default function App() {
       body: 'راجع النتيجة وبطاقة السبورة، حمّل البطاقة للأم عند الحاجة، ثم اضغط «حفظ السجل والانتقال للتلميذ التالي».',
     };
   })();
+
+  // Mandatory login gate
+  if (isSupabaseConfigured() && cloudAuthReady && !cloudUser) {
+    return (
+      <div className="app-shell" dir="rtl">
+        <div className="auth-gate">
+          <div className="auth-gate__card">
+            <div className="auth-gate__icon" aria-hidden="true"><ShieldCheck size={28} /></div>
+            <h2>تسجيل دخول الفاحص</h2>
+            <p>يجب تسجيل الدخول بحساب الفاحص المعتمد لتشغيل النظام والمزامنة.</p>
+            <button className="m3-btn m3-btn--primary" onClick={() => setCloudLoginOpen(true)}>
+              <LogIn size={18} /> دخول
+            </button>
+          </div>
+        </div>
+        <CloudAuthModal
+          isOpen={cloudLoginOpen}
+          isOnline={isOnline}
+          onClose={() => {/* mandatory: do not close */}}
+          onSignedIn={handleCloudSignedIn}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell" dir="rtl">
