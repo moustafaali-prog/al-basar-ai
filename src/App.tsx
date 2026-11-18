@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   Camera,
@@ -11,9 +11,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  LogIn,
+  LogOut,
   RefreshCw,
   Sparkles,
   UserCheck,
+  UserRound,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -56,6 +59,8 @@ import { MethodologyAndGoldStandardModal } from './components/MethodologyAndGold
 import { InteractiveStudentTrainingModal } from './components/InteractiveStudentTrainingModal';
 import { useFeedback } from './components/FeedbackProvider';
 import { isSupabaseConfigured } from './utils/supabaseConfig';
+import { CloudAuthModal } from './components/CloudAuthModal';
+import type { CloudAuthUser } from './utils/supabaseAuth';
 
 type ClinicalStepId = 'protocol' | 'acuity' | 'biometry' | 'cdss';
 type ActiveTab = ClinicalStepId;
@@ -218,6 +223,12 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
+  // Cloud auth (authenticated sync only). Local screening never requires it.
+  const [cloudUser, setCloudUser] = useState<CloudAuthUser | null>(null);
+  const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
+  const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(false);
+  const pendingCloudSync = useRef(false);
+
   useEffect(() => {
     const updateOnline = () => setIsOnline(navigator.onLine);
     window.addEventListener('online', updateOnline);
@@ -225,6 +236,36 @@ export default function App() {
     return () => {
       window.removeEventListener('online', updateOnline);
       window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
+
+  // Initialise cloud auth lazily after first paint — it does not block the offline-first UI.
+  useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      setCloudAuthReady(true);
+      return;
+    }
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    const timer = window.setTimeout(async () => {
+      try {
+        const { loadCloudAuthUser, subscribeToCloudAuth } = await import('./utils/supabaseAuth');
+        const user = await loadCloudAuthUser();
+        if (cancelled) return;
+        setCloudUser(user);
+        setCloudAuthReady(true);
+        unsubscribe = await subscribeToCloudAuth((u) => {
+          if (!cancelled) setCloudUser(u);
+        });
+        if (cancelled) unsubscribe?.();
+      } catch {
+        if (!cancelled) setCloudAuthReady(true);
+      }
+    }, 800);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      unsubscribe?.();
     };
   }, []);
 
@@ -321,6 +362,7 @@ export default function App() {
     gold_standard_date: r.Gold_Standard_Date ?? null,
     gold_standard_criteria: r.Gold_Standard_Criteria ?? null,
     gold_standard_masked: r.Gold_Standard_Masked ?? null,
+    eye_photo_url: r.Eye_Photo_URL ?? null,
     examination_date: r.Examination_Date,
     created_at: r.Examination_Date,
   });
@@ -334,12 +376,14 @@ export default function App() {
       notify('سحابة المشرف غير مُعدة. سجّل VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY.', 'info');
       return;
     }
+
     const { getSupabaseClient } = await import('./utils/supabaseClient');
     const client = getSupabaseClient();
     if (!client) {
       notify('تعذر تهيئة عميل Supabase.', 'error');
       return;
     }
+
     setIsSyncing(true);
     try {
       const pending = records.filter(r => r._syncStatus !== 'synced');
@@ -350,16 +394,48 @@ export default function App() {
       }
       let syncedCount = 0;
       const syncedIds = new Set<string>();
+      let authFailure = false;
+
       for (const rec of pending) {
-        const payload = mapRecordToSupabase(rec);
+        let payload = mapRecordToSupabase(rec);
+
+        // Photo handling: if local data URL exists, compress & upload then store public URL
+        if (rec.Eye_Photo_URL && rec.Eye_Photo_URL.startsWith('data:')) {
+          try {
+            const { compressImageToBlob, photoFileName } = await import('./utils/imageCompress');
+            const { loadCloudAuthUser } = await import('./utils/supabaseAuth');
+            const user = await loadCloudAuthUser();
+            const userId = user?.id ?? 'anon';
+            const blob = await compressImageToBlob(rec.Eye_Photo_URL, 1024, 0.7);
+            const path = photoFileName(userId, rec.Child_ID);
+            const { error: upErr } = await client.storage.from('screening-photos').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+            if (!upErr) {
+              const { data } = client.storage.from('screening-photos').getPublicUrl(path);
+              payload.eye_photo_url = data.publicUrl;
+              // update local record to replace data URL with public URL
+              rec.Eye_Photo_URL = data.publicUrl;
+            } else {
+              console.warn('Photo upload failed', upErr);
+            }
+          } catch (e) {
+            console.warn('Photo compress/upload skipped', e);
+          }
+        }
+
         const { error } = await client.from('student_screening_records').upsert(payload, { onConflict: 'child_id' });
         if (error) {
           console.error('Supabase upsert error', rec.Child_ID, error);
+          const status = (error as { status?: number }).status;
+          const message = (error as { message?: string }).message ?? '';
+          if (status === 401 || /jwt|session|permission denied|row-level security/i.test(message)) {
+            authFailure = true;
+          }
           continue;
         }
         syncedIds.add(rec.Child_ID);
         syncedCount++;
       }
+
       if (syncedCount > 0) {
         const next = records.map(r => syncedIds.has(r.Child_ID) ? { ...r, _syncStatus: 'synced' as const } : r);
         if (persistRecords(next)) setRecords(next);
@@ -370,6 +446,12 @@ export default function App() {
         );
       } else {
         notify('فشلت المزامنة؛ تحقق من الاتصال وسجل Supabase.', 'error');
+      }
+
+      if (authFailure && syncedCount === 0) {
+        pendingCloudSync.current = true;
+        setCloudLoginOpen(true);
+        notify('انتهت صلاحية الجلسة. سجّل الدخول مجدداً لمتابعة المزامنة.', 'error');
       }
     } catch (e) {
       console.error(e);
@@ -418,6 +500,38 @@ export default function App() {
       setRecords([]);
       notify('حُذفت السجلات من التخزين المحلي لهذا المتصفح.', 'success');
     }
+  };
+
+  const openCloudLogin = () => {
+    pendingCloudSync.current = false;
+    setCloudLoginOpen(true);
+  };
+
+  const handleCloudSignedIn = (user: CloudAuthUser) => {
+    setCloudUser(user);
+    setCloudLoginOpen(false);
+    notify('تم تسجيل الدخول إلى سحابة المشرف.', 'success');
+    if (pendingCloudSync.current) {
+      pendingCloudSync.current = false;
+      void syncLocalRecordsToCloud();
+    }
+  };
+
+  const handleCloudSignOut = async () => {
+    const accepted = await confirmAction({
+      title: 'تسجيل الخروج من السحابة؟',
+      message: 'ستبقى جميع السجلات محفوظة محلياً على هذا الجهاز. المزامنة السحابية تتطلب تسجيل الدخول مرة أخرى.',
+      confirmLabel: 'تسجيل الخروج',
+    });
+    if (!accepted) return;
+    try {
+      const { signOutOfCloud } = await import('./utils/supabaseAuth');
+      await signOutOfCloud();
+    } catch {
+      // حتى إذا فشل طلب الشبكة، نُمسح الجلسة محلياً
+    }
+    setCloudUser(null);
+    notify('تم تسجيل الخروج من السحابة. الفحص المحلي مستمر.', 'info');
   };
 
   const generateNextId = (sourceRecords: StudentScreeningRecord[] = records) => {
@@ -898,6 +1012,8 @@ export default function App() {
                   <span>🟢 متصل بالإنترنت</span>
                   {!isSupabaseConfigured() ? (
                     <span className="sync-status__sub"> - سحابة المشرف غير مهيأة</span>
+                  ) : cloudAuthReady && !cloudUser ? (
+                    <span className="sync-status__sub"> - تسجيل الدخول اختياري</span>
                   ) : records.some(r => r._syncStatus !== 'synced') ? (
                     <span className="sync-status__sub"> - بانتظار المزامنة</span>
                   ) : null}
@@ -909,17 +1025,55 @@ export default function App() {
                 </span>
               )}
             </div>
-            <button
-              type="button"
-              className="sync-status__btn"
-              onClick={syncLocalRecordsToCloud}
-              disabled={!isOnline || isSyncing}
-              title={!isSupabaseConfigured() ? 'سجّل VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY أولاً' : undefined}
-              aria-busy={isSyncing}
-            >
-              <RefreshCw size={16} className={isSyncing ? 'spin' : ''} aria-hidden="true" />
-              <span>{isSyncing ? 'جاري المزامنة…' : '🔄 مزامنة السجلات مع سحابة المشرف'}</span>
-            </button>
+            <div className="sync-status-bar__actions">
+              {isSupabaseConfigured() && cloudAuthReady && (
+                cloudUser ? (
+                  <span className="sync-status__account">
+                    <span className="sync-status__account-icon" aria-hidden="true">
+                      <UserRound size={15} />
+                    </span>
+                    <span className="sync-status__account-email" title={cloudUser.email ?? ''}>
+                      {cloudUser.email}
+                    </span>
+                    <button
+                      type="button"
+                      className="sync-status__signout"
+                      onClick={handleCloudSignOut}
+                      aria-label="تسجيل الخروج من سحابة المشرف"
+                    >
+                      <LogOut size={15} aria-hidden="true" />
+                      <span>خروج</span>
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="sync-status__login"
+                    onClick={openCloudLogin}
+                  >
+                    <LogIn size={15} aria-hidden="true" />
+                    <span>دخول الفاحص</span>
+                  </button>
+                )
+              )}
+              <button
+                type="button"
+                className="sync-status__btn"
+                onClick={syncLocalRecordsToCloud}
+                disabled={!isOnline || isSyncing}
+                title={
+                  !isSupabaseConfigured()
+                    ? 'سجّل VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY أولاً'
+                    : cloudAuthReady && !cloudUser
+                    ? 'تسجيل الدخول اختياري؛ سيُطلب عند تفعيل سياسات المصادقة'
+                    : undefined
+                }
+                aria-busy={isSyncing}
+              >
+                <RefreshCw size={16} className={isSyncing ? 'spin' : ''} aria-hidden="true" />
+                <span>{isSyncing ? 'جاري المزامنة…' : '🔄 مزامنة السجلات مع سحابة المشرف'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -1217,6 +1371,14 @@ export default function App() {
       <InteractiveStudentTrainingModal
         isOpen={isTrainingOpen}
         onClose={() => setIsTrainingOpen(false)}
+      />
+
+      {/* Cloud examiner sign-in, required only for syncing records */}
+      <CloudAuthModal
+        isOpen={cloudLoginOpen}
+        isOnline={isOnline}
+        onClose={() => { setCloudLoginOpen(false); pendingCloudSync.current = false; }}
+        onSignedIn={handleCloudSignedIn}
       />
 
       <footer className="app-footer">

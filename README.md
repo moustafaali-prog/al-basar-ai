@@ -24,12 +24,25 @@ When hosted on HTTPS (or localhost), the web app caches its application shell af
 
 The app stores every screening record locally first (`albasar_master_records_v3`). Cloud sync is optional and disabled until Supabase credentials are configured. When enabled, the examiner can tap **🔄 مزامنة السجلات مع سحابة المشرف** to upsert pending records to the `student_screening_records` table; the local copy remains the source of truth during offline screening. Camera access is requested only when the examiner opens the camera station. The image measurements use examiner-selected points and an assumed HVID conversion reference; they are exploratory inputs, not validated automated clinical measurements.
 
-### Optional Supabase cloud sync setup
+### Optional Supabase cloud sync setup (authenticated examiners)
 
-1. Create a Supabase project and run [`supabase/schema.sql`](supabase/schema.sql) in the SQL Editor. It creates the SPSS 35+ variable mirror plus indexes, an `updated_at` trigger, and pilot RLS policies.
-2. Copy `.env.example` to `.env.local` and fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from Supabase → Project Settings → API.
-3. Run `npm run build`. Without valid keys the app stays fully offline-first and the sync action reports that the cloud is not configured.
+1. Create a Supabase project (`eu-west-1`) and run [`supabase/schema.sql`](supabase/schema.sql) in the SQL Editor. It creates:
+   - `student_screening_records` with internal `owner_id` for RLS
+   - `examiner_profiles` table and the `handle_new_examiner()` trigger linked to `auth.users`
+   - Security-definer function `is_supervisor()` and RLS policies restricting select/insert/update to authenticated users, examiners can only see their own rows, supervisors can read all rows.
+   - Row-level privileges revoke `anon` access entirely.
+2. In **Authentication → Providers → Email** disable public sign-ups. Create examiner accounts manually via **Authentication → Users → Add user**. Promote the lead supervisor by running:
+   ```sql
+   update public.examiner_profiles
+   set role = 'supervisor'
+   where user_id = '00000000-0000-0000-0000-000000000000'; -- replace with UID
+   ```
+   or via the Supabase dashboard.
+3. Copy `.env.example` to `.env.local` and fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from Project Settings → API. **Do not store a service-role key** in the browser build.
+4. Build with `npm run build`. The app remains 100% offline-first: local screening never requires login. Cloud sync is gated by an examiner session; the login button opens in the sync status bar only when online.
+5. When a session is active, syncing upserts only records owned by `auth.uid()`. The SPSS 35-variable export is unchanged and excludes `owner_id`.
 
-> **Security note:** the pilot RLS policies allow the public anon key to insert/update/select this one table. For a production multi-tenant deployment, replace them with authenticated examiner policies and a server-side sync endpoint.
+> **Security note:** Anon RLS policies are removed. Sync requires a logged-in Supabase session. Records remain local first; a signed-out examiner can continue screening offline and sync later after signing in.
+
 
 Thresholds and categories shown in the app are model settings. Confirm the screening protocol, age-specific optotypes, referral rules, consent process, and reference-standard workflow with the study's responsible clinical and ethics teams before field use.

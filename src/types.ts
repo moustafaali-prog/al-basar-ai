@@ -128,6 +128,8 @@ export interface StudentScreeningRecord {
   Gold_Standard_Date?: string;
   Gold_Standard_Criteria?: string;
   Gold_Standard_Masked?: 'YES' | 'NO' | 'UNKNOWN';
+  /** URL to compressed eye photo stored in Supabase Storage; not part of SPSS export. */
+  Eye_Photo_URL?: string;
 }
 
 export interface CalibrationData {

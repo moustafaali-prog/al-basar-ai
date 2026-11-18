@@ -2,6 +2,12 @@
 -- Al-Basar AI v3 · Supabase schema (SPSS 35+ variable mirror)
 -- Run inside Supabase → SQL Editor.
 -- Local storage remains the primary source during offline screening.
+--
+-- Cloud sync is authenticated: examiners sign in with an email/password
+-- account created by the project supervisor. Each record stores an internal
+-- owner_id, examiners can only sync/read their own records, and supervisors
+-- can read every record. The 35 SPSS variables are unchanged; owner_id is
+-- internal metadata and is not part of the CSV export.
 -- =========================================================
 
 create table if not exists public.student_screening_records (
@@ -58,9 +64,12 @@ create table if not exists public.student_screening_records (
   gold_standard_date text,
   gold_standard_criteria text,
   gold_standard_masked text,
+  eye_photo_url text,
   examination_date timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  -- Internal row owner for RLS. Not part of the SPSS research dataset.
+  owner_id uuid default auth.uid()
 );
 
 -- Safe migration for an existing pilot table created from the first schema draft.
@@ -90,11 +99,14 @@ alter table public.student_screening_records
   add column if not exists gold_standard_date text,
   add column if not exists gold_standard_criteria text,
   add column if not exists gold_standard_masked text,
+  add column if not exists eye_photo_url text,
+  add column if not exists owner_id uuid default auth.uid(),
   add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists idx_ssr_school_name on public.student_screening_records (school_name);
 create index if not exists idx_ssr_examination_date on public.student_screening_records (examination_date desc);
 create index if not exists idx_ssr_examiner on public.student_screening_records (examiner_id);
+create index if not exists idx_ssr_owner on public.student_screening_records (owner_id);
 
 -- Keep updated_at accurate for supervisor aggregation.
 create or replace function public.set_updated_at()
@@ -110,35 +122,112 @@ create trigger trg_ssr_updated_at
 before update on public.student_screening_records
 for each row execute function public.set_updated_at();
 
--- Row Level Security.
--- Pilot deployment: the PWA uses the public anon key, so allow anonymous
--- insert/update/select for this table only. For a production multi-tenant
--- deployment, replace these policies with authenticated examiner policies.
+-- =========================================================
+-- Examiner accounts and roles
+-- =========================================================
+-- One profile row per Supabase Auth user. The signup trigger below creates
+-- it automatically; the supervisor promotes trusted accounts to 'supervisor'
+-- from the SQL Editor (see README).
+create table if not exists public.examiner_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  role text not null default 'examiner' check (role in ('examiner', 'supervisor')),
+  display_name text,
+  examiner_code text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.examiner_profiles enable row level security;
+
+-- Security-definer helper: avoids recursive RLS lookups on examiner_profiles.
+create or replace function public.is_supervisor()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.examiner_profiles
+    where user_id = auth.uid()
+      and role = 'supervisor'
+  );
+$$;
+
+revoke all on function public.is_supervisor() from public;
+grant execute on function public.is_supervisor() to authenticated;
+
+-- Every new Auth user receives an examiner profile automatically.
+create or replace function public.handle_new_examiner()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.examiner_profiles (user_id, display_name)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', new.email))
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function public.handle_new_examiner();
+
+drop policy if exists "albasar profile self read" on public.examiner_profiles;
+create policy "albasar profile self read"
+  on public.examiner_profiles
+  for select
+  to authenticated
+  using (user_id = auth.uid() or public.is_supervisor());
+
+-- Profiles are provisioned by the trigger and managed by the supervisor;
+-- examiners cannot edit their own role.
+grant usage on schema public to authenticated;
+grant select on public.examiner_profiles to authenticated;
+revoke all on public.examiner_profiles from anon;
+
+-- =========================================================
+-- Row Level Security for screening records (authenticated only)
+-- =========================================================
 alter table public.student_screening_records enable row level security;
 
+-- Remove the earlier pilot policies if this schema is re-run.
 drop policy if exists "albasar anon insert" on public.student_screening_records;
-create policy "albasar anon insert"
+drop policy if exists "albasar anon update" on public.student_screening_records;
+drop policy if exists "albasar anon select" on public.student_screening_records;
+drop policy if exists "albasar examiner insert" on public.student_screening_records;
+drop policy if exists "albasar record read" on public.student_screening_records;
+drop policy if exists "albasar record update" on public.student_screening_records;
+
+-- An examiner may create a row only for themselves. owner_id defaults to
+-- auth.uid(), so the app never needs to send it.
+create policy "albasar examiner insert"
   on public.student_screening_records
   for insert
-  to anon
-  with check (true);
+  to authenticated
+  with check (owner_id = auth.uid());
 
-drop policy if exists "albasar anon update" on public.student_screening_records;
-create policy "albasar anon update"
-  on public.student_screening_records
-  for update
-  to anon
-  using (true)
-  with check (true);
-
-drop policy if exists "albasar anon select" on public.student_screening_records;
-create policy "albasar anon select"
+-- Examiners read/update their own rows; supervisors read/update every row.
+create policy "albasar record read"
   on public.student_screening_records
   for select
-  to anon
-  using (true);
+  to authenticated
+  using (owner_id = auth.uid() or public.is_supervisor());
+
+create policy "albasar record update"
+  on public.student_screening_records
+  for update
+  to authenticated
+  using (owner_id = auth.uid() or public.is_supervisor())
+  with check (owner_id = auth.uid() or public.is_supervisor());
 
 -- Table privileges are separate from RLS policies. Without these GRANTs the
 -- Data API returns "permission denied for table" even when policies exist.
-grant usage on schema public to anon, authenticated;
-grant select, insert, update on public.student_screening_records to anon, authenticated;
+-- The public anon role is fully excluded from screening data.
+grant select, insert, update on public.student_screening_records to authenticated;
+revoke all on public.student_screening_records from anon;
