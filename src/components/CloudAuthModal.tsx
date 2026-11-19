@@ -61,7 +61,9 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [testResult, setTestResult] = useState<string | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const configured = isSupabaseConfigured();
 
@@ -71,6 +73,8 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setErrorMessage('');
     setShowPassword(false);
     setSubmitting(false);
+    setTesting(false);
+    setTestResult(null);
     setPassword('');
     const timer = window.setTimeout(() => emailRef.current?.focus(), 60);
 
@@ -86,6 +90,38 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   }, [isOpen, onClose, submitting]);
 
   if (!isOpen) return null;
+
+  const testConnection = async () => {
+    setTestResult(null);
+    setErrorMessage('');
+    setTesting(true);
+    try {
+      const { testSupabaseConnection, testSupabaseUpsert } = await import('../utils/supabaseClient');
+      const read = await testSupabaseConnection();
+      if (!read.ok) {
+        const exact = [read.code, read.message, read.details, read.hint]
+          .filter(Boolean)
+          .join(' | ');
+        setTestResult(`⚠️ فشل GET (${read.status ?? '—'}): ${exact}`);
+        return;
+      }
+
+      const write = await testSupabaseUpsert();
+      if (!write.ok) {
+        setTestResult(`⚠️ فشل UPSERT التجريبي: ${write.message}`);
+        return;
+      }
+
+      const dropped = write.droppedColumns?.length
+        ? ` | أعمدة غير موجودة في الجدول وتم تجاهلها: ${write.droppedColumns.join(', ')}`
+        : '';
+      setTestResult(`✅ الاتصال ناجح وتم إرسال سجل تجريبي. ${write.message}${dropped}`);
+    } catch (e) {
+      setTestResult(`❌ خطأ في الاختبار: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -236,6 +272,24 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
               )}
               <span>{submitting ? 'جارٍ التحقق…' : 'تسجيل الدخول'}</span>
             </button>
+
+            <button
+              type="button"
+              className="m3-btn m3-btn--ghost m3-btn--block auth-dialog__submit"
+              onClick={testConnection}
+              disabled={submitting || testing || !isOnline || !configured}
+              style={{ marginTop: '8px' }}
+              aria-busy={testing}
+            >
+              {testing ? <RefreshCw size={16} className="spin" aria-hidden="true" /> : null}
+              <span>{testing ? 'جارٍ فحص الاتصال وإرسال سجل تجريبي…' : '🔍 اختبار الاتصال وإرسال سجل تجريبي'}</span>
+            </button>
+
+            {testResult && (
+              <p className="auth-dialog__error" role="status" style={{ marginTop: '8px' }}>
+                {testResult}
+              </p>
+            )}
 
             <p className="auth-dialog__hint">
               تُنشأ الحسابات من مشرف النظام عبر لوحة Supabase، ولا يوجد تسجيل ذاتي.

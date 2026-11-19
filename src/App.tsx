@@ -323,64 +323,6 @@ export default function App() {
     }
   };
 
-  const mapRecordToSupabase = (r: StudentScreeningRecord) => ({
-    child_id: r.Child_ID,
-    examiner_id: r.Examiner_ID,
-    paper_examiner_id: r.Paper_Examiner_ID ?? null,
-    paper_started_at: r.Paper_Started_At ?? null,
-    paper_completed_at: r.Paper_Completed_At ?? null,
-    smart_examiner_id: r.Smart_Examiner_ID ?? null,
-    smart_started_at: r.Smart_Started_At ?? null,
-    smart_completed_at: r.Smart_Completed_At ?? null,
-    parental_consent: r.Parental_Consent,
-    child_assent: r.Child_Assent ?? null,
-    school_name: r.School_Name,
-    school_sector: r.School_Sector,
-    grade_level: r.Grade_Level,
-    age_years: r.Age_Years,
-    gender: r.Gender,
-    wears_glasses: r.Wears_Glasses,
-    who_pre_screen: r.WHO_PreScreen ?? null,
-    who_screening: r.WHO_Screening ?? null,
-    who_referral_flag: r.WHO_Referral_Flag ?? null,
-    crossover_sequence: r.Crossover_Sequence,
-    paper_snellen_od: r.Paper_Snellen_OD,
-    paper_logmar_od: r.Paper_LogMAR_OD,
-    paper_snellen_os: r.Paper_Snellen_OS,
-    paper_logmar_os: r.Paper_LogMAR_OS,
-    paper_logmar_worse: r.Paper_LogMAR_Worse ?? null,
-    paper_time_sec: r.Paper_Time_Sec,
-    paper_referral: r.Paper_Referral,
-    smart_snellen_od: r.Smart_Snellen_OD,
-    smart_acuity_od_below_test_range: r.Smart_Acuity_OD_Below_Test_Range ?? null,
-    smart_logmar_od: r.Smart_LogMAR_OD,
-    smart_snellen_os: r.Smart_Snellen_OS,
-    smart_acuity_os_below_test_range: r.Smart_Acuity_OS_Below_Test_Range ?? null,
-    smart_logmar_os: r.Smart_LogMAR_OS,
-    smart_logmar_worse: r.Smart_LogMAR_Worse ?? null,
-    smart_iod_logmar: r.Smart_IOD_LogMAR,
-    smart_time_sec: r.Smart_Time_Sec,
-    hirschberg_asym_mm: r.Hirschberg_Asym_mm,
-    hirschberg_prism_diopters: r.Hirschberg_Prism_Diopters,
-    mrd1_min_mm: r.MRD1_Min_mm,
-    triage_ocular_flag: r.Triage_Ocular_Flag,
-    ai_quality_flag: r.AI_Quality_Flag ?? null,
-    asthenopia_score: r.Asthenopia_Score,
-    final_triage_referral: r.Final_Triage_Referral,
-    referral_urgency: r.Referral_Urgency,
-    referral_phcc: r.Referral_PHCC,
-    follow_up_status: r.FollowUp_Status,
-    spectacles_prescribed_fitted: r.Spectacles_Prescribed_Fitted ?? null,
-    gold_standard_confirmed: r.Gold_Standard_Confirmed ?? 99,
-    gold_standard_method: r.Gold_Standard_Method ?? null,
-    gold_standard_examiner_id: r.Gold_Standard_Examiner_ID ?? null,
-    gold_standard_date: r.Gold_Standard_Date ?? null,
-    gold_standard_criteria: r.Gold_Standard_Criteria ?? null,
-    gold_standard_masked: r.Gold_Standard_Masked ?? null,
-    eye_photo_url: r.Eye_Photo_URL ?? null,
-    examination_date: r.Examination_Date,
-  });
-
   const syncLocalRecordsToCloud = async () => {
     if (!isOnline) {
       notify('وضع العمل بدون إنترنت. المزامنة متاحة عند الاتصال.', 'info');
@@ -391,7 +333,7 @@ export default function App() {
       return;
     }
 
-    const { getSupabaseClient } = await import('./utils/supabaseClient');
+    const { getSupabaseClient, upsertScreeningRecord } = await import('./utils/supabaseClient');
     const client = getSupabaseClient();
     if (!client) {
       notify('تعذر تهيئة عميل Supabase.', 'error');
@@ -409,11 +351,10 @@ export default function App() {
       let syncedCount = 0;
       const syncedIds = new Set<string>();
       let authFailure = false;
-      const errors: string[] = [];
+      const errors: Array<{ childId: string; status?: number; message: string; code?: string }> = [];
+      const skippedColumns = new Set<string>();
 
       for (const rec of pending) {
-        let payload = mapRecordToSupabase(rec);
-
         // Photo handling: if local data URL exists, compress & upload then store public URL
         if (rec.Eye_Photo_URL && rec.Eye_Photo_URL.startsWith('data:')) {
           try {
@@ -426,8 +367,6 @@ export default function App() {
             const { error: upErr } = await client.storage.from('screening-photos').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
             if (!upErr) {
               const { data } = client.storage.from('screening-photos').getPublicUrl(path);
-              payload.eye_photo_url = data.publicUrl;
-              // update local record to replace data URL with public URL
               rec.Eye_Photo_URL = data.publicUrl;
             } else {
               console.warn('Photo upload failed', upErr);
@@ -437,32 +376,58 @@ export default function App() {
           }
         }
 
-        const { error } = await client.from('student_screening_records').upsert(payload, { onConflict: 'child_id' });
-        if (error) {
-          console.error('Supabase upsert error', rec.Child_ID, error);
+        try {
+          const result = await upsertScreeningRecord(rec);
+          if (result.droppedColumns?.length) {
+            console.warn('Supabase schema cache is missing columns; they were skipped:', result.droppedColumns);
+            result.droppedColumns.forEach((column) => skippedColumns.add(column));
+          }
+          syncedIds.add(rec.Child_ID);
+          syncedCount++;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error('Supabase upsert error', rec.Child_ID, message);
           const status = (error as { status?: number }).status;
-          const message = (error as { message?: string }).message ?? '';
-          errors.push(`${rec.Child_ID}: ${message}`);
-          if (status === 401 || /jwt|session|permission denied|row-level security/i.test(message)) {
+          const code = (error as { code?: string }).code;
+          errors.push({ childId: rec.Child_ID, status, message, code });
+          if (status === 401 || status === 403 || /jwt|session|permission denied|row-level security/i.test(message)) {
             authFailure = true;
           }
           continue;
         }
-        syncedIds.add(rec.Child_ID);
-        syncedCount++;
       }
 
       if (syncedCount > 0) {
         const next = records.map(r => syncedIds.has(r.Child_ID) ? { ...r, _syncStatus: 'synced' as const } : r);
         if (persistRecords(next)) setRecords(next);
         const failedCount = pending.length - syncedCount;
+        const schemaNote = skippedColumns.size
+          ? ` تنبيه: أعمدة غير موجودة في الجدول وتم تجاهلها (${Array.from(skippedColumns).join(', ')}); شغّل supabase/schema.sql لتحديث الجدول.`
+          : '';
+        const firstErrorNote = failedCount > 0 && errors[0]
+          ? ` سبب أول خطأ: ${errors[0].message}`
+          : '';
         notify(
-          `تمت مزامنة ${syncedCount} سجل مع سحابة المشرف.${failedCount > 0 ? ` تعذر مزامنة ${failedCount} سجل؛ سيبقى محلياً للمحاولة لاحقاً.` : ''}`,
-          failedCount > 0 ? 'info' : 'success'
+          `تمت مزامنة ${syncedCount} سجل مع سحابة المشرف.${failedCount > 0 ? ` تعذر مزامنة ${failedCount} سجل؛ سيبقى محلياً للمحاولة لاحقاً.${firstErrorNote}` : ''}${schemaNote}`,
+          failedCount > 0 || skippedColumns.size > 0 ? 'info' : 'success'
         );
       } else {
-        const firstErr = errors[0] ?? 'خطأ غير معروف';
-        notify(`فشلت المزامنة: ${firstErr}. تحقق من الاتصال وسجل Supabase.`, 'error');
+        const first = errors[0];
+        let diagnostic = 'فشل غير معروف';
+        if (first) {
+          const { status, message, code } = first;
+          const msg = (message ?? '').toLowerCase();
+          if (status === 404 || code === '42P01' || /relation.*does not exist|table.*not found/i.test(msg)) {
+            diagnostic = '⚠️ جدول قاعدة البيانات غير موجود — يرجى تشغيل ملف supabase/schema.sql في SQL Editor داخل موقع Supabase.';
+          } else if (status === 401 || status === 403 || code === '42501' || /permission denied|row-level security|rls|jwt/i.test(msg)) {
+            diagnostic = `⚠️ صلاحيات الجدول (RLS) تمنع الحفظ — يرجى تحديث سياسة RLS في SQL Editor. ${message}`;
+          } else if (status === 400 || code === 'PGRST204' || /column.*does not exist/i.test(msg)) {
+            diagnostic = `⚠️ خطأ في أعمدة الحقول (PGRST204): ${message}`;
+          } else {
+            diagnostic = `فشلت المزامنة: ${message} ${status ? `(كود ${status})` : ''}`;
+          }
+        }
+        notify(diagnostic, 'error');
       }
 
       if (authFailure && syncedCount === 0) {
@@ -472,7 +437,8 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      notify('خطأ أثناء المزامنة مع السحابة.', 'error');
+      const exact = e instanceof Error ? e.message : String(e);
+      notify(`خطأ أثناء المزامنة مع السحابة: ${exact}`, 'error');
     } finally {
       setIsSyncing(false);
     }
