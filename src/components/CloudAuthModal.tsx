@@ -87,6 +87,17 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   });
   const [testResult, setTestResult] = useState<string | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  // Keep the latest close handler and busy flags in refs so the open/close
+  // effect below only runs when the modal actually opens. Otherwise an inline
+  // `onClose` prop from the parent would reset the tab and wipe the password
+  // on every parent re-render.
+  const onCloseRef = useRef(onClose);
+  const submittingRef = useRef(submitting);
+  const testingRef = useRef(testing);
+
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { submittingRef.current = submitting; }, [submitting]);
+  useEffect(() => { testingRef.current = testing; }, [testing]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -99,11 +110,10 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setTesting(false);
     setTestResult(null);
     setPassword('');
-    setTestResult(null);
     const timer = window.setTimeout(() => emailRef.current?.focus(), 60);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !submitting && !testing) onClose();
+      if (event.key === 'Escape' && !submittingRef.current && !testingRef.current) onCloseRef.current();
     };
     window.addEventListener('keydown', handleKeyDown);
 
@@ -111,7 +121,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
       window.clearTimeout(timer);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

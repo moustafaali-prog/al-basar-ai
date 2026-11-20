@@ -503,6 +503,18 @@ export default function App() {
     }
   };
 
+  const handleCloseCloudLogin = () => {
+    setCloudLoginOpen(false);
+    pendingCloudSync.current = false;
+  };
+
+  const handleContinueWithoutAccount = () => {
+    setCloudLoginOpen(false);
+    pendingCloudSync.current = false;
+    notify('تم تفعيل المزامنة السريعة باستخدام مفتاح anon العام. لا حاجة لبريد إلكتروني.', 'info');
+    void syncLocalRecordsToCloud();
+  };
+
   const handleCloudSignOut = async () => {
     const accepted = await confirmAction({
       title: 'تسجيل الخروج من السحابة؟',
@@ -1397,14 +1409,9 @@ export default function App() {
       <CloudAuthModal
         isOpen={cloudLoginOpen}
         isOnline={isOnline}
-        onClose={() => { setCloudLoginOpen(false); pendingCloudSync.current = false; }}
+        onClose={handleCloseCloudLogin}
         onSignedIn={handleCloudSignedIn}
-        onContinueWithoutAccount={() => {
-          setCloudLoginOpen(false);
-          pendingCloudSync.current = false;
-          notify('تم تفعيل المزامنة السريعة باستخدام مفتاح anon العام. لا حاجة لبريد إلكتروني.', 'info');
-          void syncLocalRecordsToCloud();
-        }}
+        onContinueWithoutAccount={handleContinueWithoutAccount}
       />
 
       <footer className="app-footer">

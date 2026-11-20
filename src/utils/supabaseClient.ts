@@ -331,9 +331,12 @@ export async function upsertScreeningRecord(
 
   for (let attempt = 0; attempt < 25; attempt += 1) {
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     try {
       response = await fetch(url, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           apikey: SUPABASE_ANON_KEY_VALUE,
           Authorization: `Bearer ${token}`,
@@ -343,9 +346,14 @@ export async function upsertScreeningRecord(
         body: JSON.stringify(payload),
       });
     } catch (networkError) {
+      const aborted = networkError instanceof DOMException && networkError.name === 'AbortError';
       throw new Error(
-        `Network error while contacting Supabase: ${networkError instanceof Error ? networkError.message : String(networkError)}`,
+        aborted
+          ? 'Network error while contacting Supabase: request timed out after 30 seconds.'
+          : `Network error while contacting Supabase: ${networkError instanceof Error ? networkError.message : String(networkError)}`,
       );
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (response.ok) {
@@ -392,8 +400,11 @@ export async function testSupabaseConnection(
     return { ok: false, message: 'Supabase URL or anon key is empty.' };
   }
   const url = `${baseUrl}/rest/v1/${TABLE}?select=child_id&limit=1`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
     const response = await fetch(url, {
+      signal: controller.signal,
       headers: {
         apikey: anonKey,
         Authorization: `Bearer ${anonKey}`,
@@ -413,10 +424,15 @@ export async function testSupabaseConnection(
       hint: body.hint,
     };
   } catch (error) {
+    const aborted = error instanceof DOMException && error.name === 'AbortError';
     return {
       ok: false,
-      message: `Network error: ${error instanceof Error ? error.message : String(error)}`,
+      message: aborted
+        ? 'Network error: request timed out after 30 seconds — check your internet connection and try again.'
+        : `Network error: ${error instanceof Error ? error.message : String(error)}`,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
