@@ -9,9 +9,9 @@
   "scope": "./",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
-  "orientation": "any",
+  "orientation": "portrait-primary",
   "background_color": "#f3f7f8",
-  "theme_color": "#123c57",
+  "theme_color": "#0B57D0",
   "prefer_related_applications": false,
   "categories": ["medical", "education", "health"],
   "icons": [
@@ -28,6 +28,12 @@
       "purpose": "any"
     },
     {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "./icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
@@ -38,6 +44,20 @@
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "تسجيل تلميذ جديد",
+      "short_name": "تسجيل",
+      "url": "./?step=protocol",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "سجلات الفحص",
+      "short_name": "السجلات",
+      "url": "./?panel=database",
+      "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }
