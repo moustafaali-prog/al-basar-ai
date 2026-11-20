@@ -3,22 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Activity,
   Camera,
-  Check,
   ChevronLeft,
   ChevronRight,
   Eye,
+  GraduationCap,
   LogIn,
   LogOut,
   RefreshCw,
+  Settings,
   Sparkles,
   UserCheck,
-  UserRound,
-  Wifi,
-  WifiOff,
 } from 'lucide-react';
 
 import {
@@ -60,7 +58,16 @@ import { InteractiveStudentTrainingModal } from './components/InteractiveStudent
 import { useFeedback } from './components/FeedbackProvider';
 import { isSupabaseConfigured } from './utils/supabaseConfig';
 import { CloudAuthModal } from './components/CloudAuthModal';
+import { CloudSettingsPanel } from './components/CloudSettingsPanel';
 import type { CloudAuthUser } from './utils/supabaseAuth';
+import {
+  clearExaminerProfile,
+  getOrCreateDeviceId,
+  loadExaminerProfile,
+  saveExaminerProfile,
+  shortDisplayName,
+  type ExaminerProfile,
+} from './utils/examinerProfile';
 
 type ClinicalStepId = 'protocol' | 'acuity' | 'biometry' | 'cdss';
 type ActiveTab = ClinicalStepId;
@@ -72,7 +79,7 @@ const CLINICAL_STEPS = [
     num: 1,
     label: 'التلميذ',
     meta: 'التعريف والموافقة',
-    description: 'سجّل هوية التلميذ وموافقة ولي الأمر، ثم أكمل أسئلة الفرز الأولي.',
+    description: 'سجّل هوية التلميذ وموافقة ولي الأمر.',
     icon: UserCheck,
   },
   {
@@ -80,7 +87,7 @@ const CLINICAL_STEPS = [
     num: 2,
     label: 'النظر',
     meta: 'لوحة العينين',
-    description: 'اعرض الرموز على مسافة الفحص وسجّل استجابة كل عين على حدة.',
+    description: 'اعرض الرموز وسجّل استجابة كل عين.',
     icon: Eye,
   },
   {
@@ -88,7 +95,7 @@ const CLINICAL_STEPS = [
     num: 3,
     label: 'صورة العين',
     meta: 'المنعكس والجفن',
-    description: 'التقط صورة العينين، وراجع مؤشرات المحاذاة وعلامات العين الخارجية.',
+    description: 'التقط صورة العينين وراجع المحاذاة.',
     icon: Camera,
   },
   {
@@ -96,7 +103,7 @@ const CLINICAL_STEPS = [
     num: 4,
     label: 'النتيجة',
     meta: 'الإحالة والبطاقة',
-    description: 'راجع خلاصة الفرز، وسلّم إرشادات ولي الأمر، ثم احفظ الفحص.',
+    description: 'راجع النتيجة وسلّم الإرشادات ثم احفظ.',
     icon: Activity,
   },
 ] as const;
@@ -228,9 +235,10 @@ export default function App() {
   const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(false);
   /** True once the lazy auth bootstrap has finished (or Supabase is absent). */
   const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
-  /** Controls the dismissible "sync your records" hint banner. */
-  const [showCloudBanner, setShowCloudBanner] = useState<boolean>(true);
-  const pendingCloudSync = useRef(false);
+  /** Locally persisted examiner identity (never contains a password). */
+  const [examinerProfile, setExaminerProfile] = useState<ExaminerProfile | null>(() => loadExaminerProfile());
+  /** Records waiting for the next cloud sync. */
+  const pendingSyncCount = records.filter((record) => record._syncStatus !== 'synced').length;
 
   useEffect(() => {
     const updateOnline = () => setIsOnline(navigator.onLine);
@@ -291,6 +299,26 @@ export default function App() {
   }, [activeTab]);
 
   /**
+   * First launch: offer the minimal account modal once, and only when the
+   * device has no saved examiner profile. Closing it keeps the workflow fully
+   * offline — the app never blocks a school morning on authentication.
+   */
+  useEffect(() => {
+    const profile = loadExaminerProfile();
+    setExaminerProfile(profile);
+    if (profile) return;
+    const timer = window.setTimeout(() => setCloudLoginOpen(true), 600);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  /** Auto-fill the examiner field in Step 1 with the signed-in triple name. */
+  useEffect(() => {
+    const fullName = examinerProfile?.fullName?.trim();
+    if (!fullName) return;
+    setExaminerId((current) => (current.trim() ? current : fullName));
+  }, [examinerProfile]);
+
+  /**
    * Sticky school session: every session-level field is written once and reused
    * for the next child. Per-child fields (ID, consent, acuity, ocular values)
    * stay out of this storage key.
@@ -325,13 +353,17 @@ export default function App() {
     }
   };
 
-  const syncLocalRecordsToCloud = async () => {
+  /**
+   * Push every pending record to Supabase. `compact` is used by the one-tap
+   * top-bar button and keeps the feedback to a single short toast.
+   */
+  const syncLocalRecordsToCloud = async (compact = false) => {
     if (!isOnline) {
-      notify('وضع العمل بدون إنترنت. المزامنة متاحة عند الاتصال.', 'info');
+      notify(compact ? '⚠️ لا يوجد اتصال بالإنترنت.' : 'وضع العمل بدون إنترنت. المزامنة متاحة عند الاتصال.', 'info');
       return;
     }
     if (!isSupabaseConfigured()) {
-      notify('سحابة المشرف غير مُعدة. سجّل VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY.', 'info');
+      notify('سحابة المشرف غير مُعدة. راجع إعدادات Supabase في لوحة المشرف.', 'info');
       return;
     }
 
@@ -346,7 +378,7 @@ export default function App() {
     try {
       const pending = records.filter(r => r._syncStatus !== 'synced');
       if (pending.length === 0) {
-        notify('لا توجد سجلات بانتظار المزامنة.', 'success');
+        notify(compact ? '✅ تمت المزامنة — لا توجد سجلات معلّقة.' : 'لا توجد سجلات بانتظار المزامنة.', 'success');
         setIsSyncing(false);
         return;
       }
@@ -395,10 +427,19 @@ export default function App() {
         const droppedNote = droppedColumns.size > 0
           ? ` حقول غير موجودة في جدول Supabase وتم تجاوزها: ${Array.from(droppedColumns).join('، ')}. نفّذ supabase/schema.sql لتفعيلها.`
           : '';
-        notify(
-          `تمت مزامنة ${syncedCount} سجل مع سحابة المشرف.${failedCount > 0 ? ` تعذر مزامنة ${failedCount} سجل: ${lastError}` : ''}${droppedNote}`,
-          failedCount > 0 || droppedColumns.size > 0 ? 'info' : 'success'
-        );
+        if (compact) {
+          notify(
+            failedCount > 0
+              ? `⚠️ تمت مزامنة ${syncedCount} سجل — تعذر مزامنة ${failedCount}.`
+              : '✅ تمت المزامنة',
+            failedCount > 0 || droppedColumns.size > 0 ? 'info' : 'success',
+          );
+        } else {
+          notify(
+            `تمت مزامنة ${syncedCount} سجل مع سحابة المشرف.${failedCount > 0 ? ` تعذر مزامنة ${failedCount} سجل: ${lastError}` : ''}${droppedNote}`,
+            failedCount > 0 || droppedColumns.size > 0 ? 'info' : 'success'
+          );
+        }
       } else {
         notify(`فشلت المزامنة: ${lastError || 'تحقق من الاتصال وإعدادات Supabase.'}`, 'error');
       }
@@ -489,30 +530,31 @@ export default function App() {
   };
 
   const openCloudLogin = () => {
-    pendingCloudSync.current = false;
     setCloudLoginOpen(true);
   };
 
   const handleCloudSignedIn = (user: CloudAuthUser) => {
     setCloudUser(user);
     setCloudLoginOpen(false);
-    notify('تم تسجيل الدخول إلى سحابة المشرف.', 'success');
-    if (pendingCloudSync.current) {
-      pendingCloudSync.current = false;
-      void syncLocalRecordsToCloud();
+    const fullName = user.fullName?.trim();
+    const email = user.email?.trim() ?? '';
+    // The modal already persisted the identity (full name + device); reuse it
+    // so the top-bar badge and the record attribution stay consistent.
+    const persisted = loadExaminerProfile();
+    const profile = persisted ?? saveExaminerProfile({
+      fullName: fullName ?? '',
+      email: email || '',
+      deviceId: examinerProfile?.deviceId,
+    });
+    setExaminerProfile(profile);
+    if (profile.fullName) {
+      setExaminerId((current) => (current.trim() ? current : profile.fullName));
     }
+    notify('تم تسجيل الدخول إلى سحابة المشرف.', 'success');
   };
 
   const handleCloseCloudLogin = () => {
     setCloudLoginOpen(false);
-    pendingCloudSync.current = false;
-  };
-
-  const handleContinueWithoutAccount = () => {
-    setCloudLoginOpen(false);
-    pendingCloudSync.current = false;
-    notify('تم تفعيل المزامنة السريعة باستخدام مفتاح anon العام. لا حاجة لبريد إلكتروني.', 'info');
-    void syncLocalRecordsToCloud();
   };
 
   const handleCloudSignOut = async () => {
@@ -529,7 +571,9 @@ export default function App() {
       // حتى إذا فشل طلب الشبكة، نُمسح الجلسة محلياً
     }
     setCloudUser(null);
-    notify('تم تسجيل الخروج من السحابة. الفحص المحلي مستمر.', 'info');
+    clearExaminerProfile();
+    setExaminerProfile(null);
+    notify('تم تسجيل الخروج. الفحص المحلي مستمر.', 'info');
   };
 
   const generateNextId = (sourceRecords: StudentScreeningRecord[] = records) => {
@@ -655,6 +699,8 @@ export default function App() {
     const newRecord: StudentScreeningRecord = {
       Child_ID: childId.trim() || 'BAB-Unknown',
       Examiner_ID: examinerId.trim(),
+      Examiner_Full_Name: examinerProfile?.fullName?.trim() || examinerId.trim(),
+      Device_ID: examinerProfile?.deviceId?.trim() || getOrCreateDeviceId(),
       _syncStatus: 'pending',
       Paper_Examiner_ID: paperExaminerId.trim(),
       Paper_Started_At: paperStartedAt,
@@ -875,7 +921,7 @@ export default function App() {
       return {
         tone: 'neutral',
         title: 'الخطوة الحالية: ابدأ بتسجيل التلميذ',
-        body: 'اضغط «كود تلقائي» أو امسح QR، ثم عبّئ الصف والعمر بلمسة واحدة. بيانات الجلسة ستبقى جاهزة للتلميذ التالي.',
+        body: 'اضغط «كود تلقائي» أو امسح QR ثم أكمل بيانات التلميذ.',
       };
     }
 
@@ -884,27 +930,27 @@ export default function App() {
         return {
           tone: 'primary',
           title: `الخطوة الحالية: ${participant} — المسار ${sequence}`,
-          body: 'أكّد الموافقة والتعبئة السريعة، ثم انتقل إلى الفحص الرقمي (2م). لا تفتح اللوحة الورقية أولاً.',
+          body: 'أكّد الموافقة ثم ابدأ الفحص الرقمي (2م).',
         };
       }
       if (isDigitalFirst && smartCompletedAt && !paperCompletedAt) {
         return {
           tone: 'warn',
           title: `الخطوة الحالية: ${participant} — أكمل المحطة الورقية`,
-          body: 'انتهى الفحص الرقمي المستقل. ابدأ الآن مؤقت المحطة الورقية، وسجّل OD ثم OS، ثم اضغط متابعة إلى فحص العين.',
+          body: 'انتهى الفحص الرقمي — ابدأ مؤقت المحطة الورقية.',
         };
       }
       if (!paperCompletedAt) {
         return {
           tone: 'primary',
           title: `الخطوة الحالية: ${participant} — المسار ${sequence}`,
-          body: 'ابدأ مؤقت المحطة الورقية، وسجّل العين اليمنى OD ثم اليسرى OS بلمسة واحدة، ثم انتقل إلى الفحص الذكي.',
+          body: 'ابدأ المؤقت وسجّل OD ثم OS.',
         };
       }
       return {
         tone: 'pass',
         title: `الخطوة الحالية: ${participant} — المحطة الورقية مكتملة`,
-        body: 'اضغط «متابعة إلى فحص البصر» لبدء القياس الرقمي المستقل.',
+        body: 'اضغط «متابعة إلى فحص البصر».',
       };
     }
 
@@ -913,27 +959,27 @@ export default function App() {
         return {
           tone: 'primary',
           title: `الخطوة الحالية: ${participant} — العين اليمنى OD`,
-          body: 'اعرض الرمز المناسب للصف، وسجّل استجابة الطفل. استخدم ملء الشاشة، أو اسحب على المسرح للاتجاه، أو أزرار الرد الكبيرة.',
+          body: 'اعرض الرمز المناسب للصف وسجّل استجابة الطفل.',
         };
       }
       if (!smartOs.trim()) {
         return {
           tone: 'primary',
           title: `الخطوة الحالية: ${participant} — العين اليسرى OS`,
-          body: 'أكمل العين اليسرى بنفس طريقة العين اليمنى. لا ترجع إلى نتيجة المحطة الورقية أثناء القياس.',
+          body: 'أكمل العين اليسرى دون الرجوع لنتيجة الورقية.',
         };
       }
       if (!paperCompletedAt) {
         return {
           tone: 'warn',
           title: `الخطوة الحالية: ${participant} — عد للمحطة الورقية`,
-          body: 'سُجّل الفحص الرقمي. ارجع إلى الخطوة 1 لإكمال المحطة الورقية المتبقية ثم تابع.',
+          body: 'ارجع للخطوة 1 لإكمال المحطة الورقية.',
         };
       }
       return {
         tone: 'pass',
         title: `الخطوة الحالية: ${participant} — اكتمل فحص النظر`,
-        body: 'اضغط «متابعة إلى فحص العين» لالتقاط صورة العينين وتوثيق القياسات.',
+        body: 'اضغط «متابعة إلى فحص العين».',
       };
     }
 
@@ -942,27 +988,27 @@ export default function App() {
         return {
           tone: 'primary',
           title: `الخطوة الحالية: ${participant} — صورة العين والقياسات`,
-          body: 'افتح الكاميرا والتقط صورة، أو المس إحدى التوصيات السريرية الثلاث. سيُعتبر القياس مسجلاً تلقائياً بعد اللمس.',
+          body: 'افتح الكاميرا والتقط صورة أو المس توصية سريرية.',
         };
       }
       if (!externalEyeScreened) {
         return {
           tone: 'warn',
           title: `الخطوة الحالية: ${participant} — تأكيد العين الخارجية`,
-          body: 'اضغط «العين الخارجية سليمة» إذا لم توجد قشور أو إفرازات أو احمرار أو عتامة، ثم اعرض النتيجة.',
+          body: 'أكد «العين الخارجية سليمة» أو سجّل الملاحظات.',
         };
       }
       return {
         tone: 'pass',
         title: `الخطوة الحالية: ${participant} — جاهز للنتيجة`,
-        body: 'راجع القياسات، ثم اضغط «عرض النتيجة والحفظ» للانتقال إلى بطاقة ولي الأمر.',
+        body: 'راجع القياسات ثم اعرض النتيجة.',
       };
     }
 
     return {
       tone: 'pass',
       title: `الخطوة الحالية: ${participant} — النتيجة والحفظ`,
-      body: 'راجع النتيجة وبطاقة السبورة، حمّل البطاقة للأم عند الحاجة، ثم اضغط «حفظ السجل والانتقال للتلميذ التالي».',
+      body: 'راجع النتيجة ثم احفظ السجل.',
     };
   })();
 
@@ -982,113 +1028,69 @@ export default function App() {
             <button
               type="button"
               onClick={() => setIsTrainingOpen(true)}
-              className="topbar__quick topbar__quick--accent training-toggle"
-              aria-label="فتح دليل تدريب الطلبة التفاعلي"
+              className="icon-action"
+              aria-label="دليل تدريب الطلبة التفاعلي"
+              title="دليل تدريب الطلبة التفاعلي"
             >
-              <span aria-hidden="true">🎓</span>
-              <span className="topbar__quick-label">دليل تدريب الطلبة التفاعلي</span>
-              <span className="topbar__quick-label topbar__quick-label--short">دليل التدريب</span>
+              <GraduationCap size={19} aria-hidden="true" />
             </button>
             <button
               type="button"
               onClick={() => setAdminOpen(true)}
-              className="topbar__quick admin-toggle"
+              className="icon-action"
               aria-label="لوحة المشرف والبيانات"
+              title="لوحة المشرف والبيانات"
             >
-              <span aria-hidden="true">⚙️</span>
-              <span className="topbar__quick-label topbar__quick-label--admin">لوحة المشرف والبيانات</span>
+              <Settings size={19} aria-hidden="true" />
             </button>
             <button
               type="button"
-              onClick={() => setCloudLoginOpen(true)}
-              className="topbar__quick topbar__quick--cloud"
-              aria-label="تسجيل الدخول والمزامنة السحابية"
+              onClick={() => void syncLocalRecordsToCloud(true)}
+              className={`icon-action icon-action--sync${isOnline ? '' : ' is-offline'}`}
+              aria-label="مزامنة السجلات الآن"
+              title="مزامنة السجلات الآن"
+              disabled={!isOnline || isSyncing}
+              aria-busy={isSyncing}
             >
-              <span aria-hidden="true">☁️</span>
-              <span className="topbar__quick-label">تسجيل الدخول / المزامنة</span>
-              <span className="topbar__quick-label topbar__quick-label--short">السحابة</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="sync-status-bar" dir="rtl">
-          <div className="sync-status-bar__inner">
-            <div className="sync-status-bar__net">
-              {isOnline ? (
-                <span className="sync-status__pill sync-status__pill--online">
-                  <Wifi size={16} aria-hidden="true" />
-                  <span>🟢 متصل بالإنترنت</span>
-                  <span className="sync-status__sub">
-                    {cloudUser ? ' - متصل بـ Supabase' : ' - غير مسجل الدخول — اضغط هنا لتسجيل الدخول ومزامنة السجلات '}
-                    {!cloudUser && (
-                      <button type="button" className="sync-status__link" onClick={() => setCloudLoginOpen(true)} style={{background:'none',border:'none',color:'var(--m3-primary)',cursor:'pointer',padding:0}}>
-                        [فتح نافذة تسجيل الدخول والمزامنة]
-                      </button>
-                    )}
-                  </span>
-                </span>
-              ) : (
-                <span className="sync-status__pill sync-status__pill--offline">
-                  <WifiOff size={16} aria-hidden="true" />
-                  <span>🔴 وضع العمل بدون إنترنت</span>
-                </span>
+              <RefreshCw size={19} className={isSyncing ? 'spin' : ''} aria-hidden="true" />
+              {pendingSyncCount > 0 && (
+                <span className="icon-action__badge">{pendingSyncCount > 99 ? '99+' : pendingSyncCount}</span>
               )}
-            </div>
-            <div className="sync-status-bar__actions">
-              {cloudUser ? (
-                <span className="sync-status__account">
-                  <span className="sync-status__account-icon" aria-hidden="true">
-                    <UserRound size={15} />
-                  </span>
-                  <span className="sync-status__account-email" title={cloudUser.email ?? ''}>
-                    {cloudUser.email}
-                  </span>
-                  <button
-                    type="button"
-                    className="sync-status__signout"
-                    onClick={handleCloudSignOut}
-                    aria-label="تسجيل الخروج من سحابة المشرف"
-                  >
-                    <LogOut size={15} aria-hidden="true" />
-                    <span>خروج</span>
-                  </button>
+              {!isOnline && <span className="icon-action__offline-dot" aria-hidden="true" />}
+            </button>
+            {examinerProfile ? (
+              <>
+                <span
+                  className="topbar__user"
+                  title={examinerProfile.fullName || examinerProfile.email || 'حساب الفاحص'}
+                >
+                  {shortDisplayName(examinerProfile.fullName, examinerProfile.email)}
                 </span>
-              ) : (
                 <button
                   type="button"
-                  className="sync-status__login"
-                  onClick={() => setCloudLoginOpen(true)}
+                  onClick={handleCloudSignOut}
+                  className="icon-action"
+                  aria-label="تسجيل الخروج"
+                  title="تسجيل الخروج"
                 >
-                  <LogIn size={15} aria-hidden="true" />
-                  <span>دخول الفاحص</span>
+                  <LogOut size={19} aria-hidden="true" />
                 </button>
-              )}
+              </>
+            ) : (
               <button
                 type="button"
-                className="sync-status__btn"
-                onClick={syncLocalRecordsToCloud}
-                disabled={!isOnline || isSyncing}
-                aria-busy={isSyncing}
+                onClick={openCloudLogin}
+                className="icon-action icon-action--login"
+                aria-label="تسجيل الدخول"
+                title="تسجيل الدخول"
               >
-                <RefreshCw size={16} className={isSyncing ? 'spin' : ''} aria-hidden="true" />
-                <span>{isSyncing ? 'جاري المزامنة…' : '🔄 مزامنة السجلات مع سحابة المشرف'}</span>
+                <LogIn size={19} aria-hidden="true" />
+                <span className="icon-action__label">دخول</span>
               </button>
-            </div>
+            )}
           </div>
         </div>
       </header>
-
-      {isSupabaseConfigured() && isOnline && !cloudUser && showCloudBanner && (
-        <div className="cloud-banner" dir="rtl">
-          <span>☁️ لمزامنة سجلات الفحص تلقائياً مع قاعدة بيانات المشرف، اضغط هنا لتسجيل الدخول أو تفعيل المزامنة السحابية (أو تابع العمل أوفلاين محلياً).</span>
-          <div className="cloud-banner__actions">
-            <button className="m3-btn m3-btn--primary m3-btn--sm" onClick={() => { setCloudLoginOpen(true); setShowCloudBanner(false); }}>
-              تسجيل الدخول
-            </button>
-            <button className="m3-btn m3-btn--ghost m3-btn--sm" onClick={() => setShowCloudBanner(false)}>إخفاء</button>
-          </div>
-        </div>
-      )}
 
       <div className="step-indicator">
         <div className="step-indicator__track">
@@ -1330,7 +1332,7 @@ export default function App() {
               <button type="button" onClick={() => setAdminPanel('sus')} className={adminPanel === 'sus' ? 'active' : ''}>تقييم التطبيق</button>
               <button type="button" onClick={() => setAdminPanel('method')} className={adminPanel === 'method' ? 'active' : ''}>المنهجية والدليل</button>
               <button type="button" onClick={() => setAdminPanel('training')} className={adminPanel === 'training' ? 'active' : ''}>🎓 تدريب الطلبة</button>
-              <button type="button" onClick={() => { setAdminPanel('cloud'); setCloudLoginOpen(true); }} className={adminPanel === 'cloud' ? 'active' : ''}>☁️ السحابة والمزامنة</button>
+              <button type="button" onClick={() => setAdminPanel('cloud')} className={adminPanel === 'cloud' ? 'active' : ''}>☁️ السحابة والمزامنة</button>
             </nav>
             <div className="admin-drawer__content">
               {adminPanel === 'calib' && (
@@ -1353,22 +1355,14 @@ export default function App() {
                 </div>
               )}
               {adminPanel === 'cloud' && (
-                <div className="admin-method">
-                  <div className="m3-card" style={{ padding: '18px' }}>
-                    <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 800 }}>☁️ السحابة والمزامنة</h3>
-                    <p style={{ margin: '0 0 14px', color: 'var(--m3-muted)', fontSize: '12.5px', lineHeight: 1.8 }}>
-                      الحالة: {cloudUser ? `متصل بـ Supabase (${cloudUser.email})` : 'غير مسجل الدخول — يمكنك المزامنة باستخدام مفتاح anon العام أو تسجيل الدخول.'}
-                    </p>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button type="button" onClick={openCloudLogin} className="m3-btn m3-btn--primary">
-                        فتح نافذة تسجيل الدخول والمزامنة
-                      </button>
-                      <button type="button" onClick={syncLocalRecordsToCloud} className="m3-btn" disabled={!isOnline || isSyncing}>
-                        {isSyncing ? 'جاري المزامنة…' : '🔄 مزامنة الآن'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <CloudSettingsPanel
+                  isOnline={isOnline}
+                  isSyncing={isSyncing}
+                  cloudUser={cloudUser}
+                  onOpenLogin={openCloudLogin}
+                  onSync={() => void syncLocalRecordsToCloud()}
+                  onPullLatest={() => void pullLatestFromCloud()}
+                />
               )}
               {adminPanel === 'training' && (
                 <div className="admin-method">
@@ -1405,13 +1399,12 @@ export default function App() {
         onClose={() => setIsTrainingOpen(false)}
       />
 
-      {/* Cloud examiner sign-in, required only for syncing records */}
+      {/* Minimal examiner account modal — only for cloud sync, never a gate */}
       <CloudAuthModal
         isOpen={cloudLoginOpen}
         isOnline={isOnline}
         onClose={handleCloseCloudLogin}
         onSignedIn={handleCloudSignedIn}
-        onContinueWithoutAccount={handleContinueWithoutAccount}
       />
 
       <footer className="app-footer">

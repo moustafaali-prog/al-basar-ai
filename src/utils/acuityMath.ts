@@ -200,6 +200,8 @@ export function generateSPSS_CSV(records: StudentScreeningRecord[]): string {
   const headers = [
     'Child_ID',
     'Examiner_ID',
+    'Examiner_Full_Name',
+    'Device_ID',
     'Paper_Examiner_ID',
     'Paper_Started_At',
     'Paper_Completed_At',
@@ -251,6 +253,8 @@ export function generateSPSS_CSV(records: StudentScreeningRecord[]): string {
   const rows = records.map(r => [
     quote(r.Child_ID),
     quote(r.Examiner_ID),
+    quote(r.Examiner_Full_Name),
+    quote(r.Device_ID),
     quote(r.Paper_Examiner_ID),
     quote(r.Paper_Started_At),
     quote(r.Paper_Completed_At),

@@ -571,7 +571,9 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
                           {(record._syncStatus ?? 'pending') === 'synced' ? '☁️ تمت' : '⏳ بانتظار'}
                         </span>
                       </td>
-                      <td className="py-2 px-3">{record.Examiner_ID}</td>
+                      <td className="py-2 px-3" title={record.Device_ID ? `الجهاز: ${record.Device_ID}` : undefined}>
+                        {record.Examiner_Full_Name || record.Examiner_ID}
+                      </td>
                       <td className="py-2 px-3">
                         <span
                           className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-bold ${

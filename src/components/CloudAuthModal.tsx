@@ -7,21 +7,26 @@ import {
   Mail,
   RefreshCw,
   ShieldCheck,
-  WifiOff,
+  UserRound,
+  UserPlus,
   X,
 } from 'lucide-react';
 
-import { SUPABASE_ANON_KEY_VALUE, SUPABASE_URL_VALUE, setSupabaseLocalOverrides } from '../utils/supabaseConfig';
 import type { CloudAuthUser } from '../utils/supabaseAuth';
-
+import {
+  findLocalAccount,
+  getOrCreateDeviceId,
+  registerLocalAccount,
+  saveExaminerProfile,
+} from '../utils/examinerProfile';
 
 interface CloudAuthModalProps {
   isOpen: boolean;
   isOnline: boolean;
+  /** Dismiss the modal and keep working fully offline. */
   onClose: () => void;
+  /** Fired for server-backed AND locally persisted accounts. */
   onSignedIn: (user: CloudAuthUser) => void;
-  /** Field-examiner shortcut: close the modal and sync with the public anon key. */
-  onContinueWithoutAccount: () => void;
 }
 
 type CloudAuthMode = 'signin' | 'signup';
@@ -44,10 +49,10 @@ const friendlyAuthError = (error: unknown): string => {
     return '⚠️ يجب أن يتكون الرمز السري من 6 أحرف أو أرقام على الأقل.';
   }
   if (code === 'user_already_exists' || /user already registered|already been registered/i.test(message)) {
-    return '⚠️ هذا البريد الإلكتروني مسجل مسبقاً. استخدم تبويب «تسجيل الدخول» أو استعد كلمة المرور من لوحة Supabase.';
+    return '⚠️ هذا البريد الإلكتروني مسجل مسبقاً. سجّل الدخول من التبويب الأول.';
   }
   if (code === 'signup_disabled' || /signups? (are )?disabled|signup is disabled/i.test(message)) {
-    return '⚠️ إنشاء الحسابات الجديدة معطّل في إعدادات Supabase Auth. اطلب من المشرف تفعيل Sign Ups أو إنشاء الحساب من Authentication -> Users.';
+    return '⚠️ إنشاء الحسابات الجديدة معطّل في إعدادات Supabase Auth. اطلب من المشرف إنشاء الحساب.';
   }
   if (code === 'email_address_invalid' || /email address .* is invalid|invalid email/i.test(message)) {
     return '⚠️ صيغة البريد الإلكتروني غير صحيحة — مثال صحيح: name@example.com';
@@ -69,35 +74,27 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   isOnline,
   onClose,
   onSignedIn,
-  onContinueWithoutAccount,
 }) => {
   const [mode, setMode] = useState<CloudAuthMode>('signin');
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [testing, setTesting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
-  const [urlOverride, setUrlOverride] = useState(() => {
-    try { return localStorage.getItem('albasar_supabase_url') || SUPABASE_URL_VALUE; } catch { return SUPABASE_URL_VALUE; }
-  });
-  const [keyOverride, setKeyOverride] = useState(() => {
-    try { return localStorage.getItem('albasar_supabase_anon_key') || SUPABASE_ANON_KEY_VALUE; } catch { return SUPABASE_ANON_KEY_VALUE; }
-  });
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const emailRef = useRef<HTMLInputElement>(null);
-  // Keep the latest close handler and busy flags in refs so the open/close
+  const identifierRef = useRef<HTMLInputElement>(null);
+
+  // Keep the latest close handler and busy flag in refs so the open/close
   // effect below only runs when the modal actually opens. Otherwise an inline
   // `onClose` prop from the parent would reset the tab and wipe the password
   // on every parent re-render.
   const onCloseRef = useRef(onClose);
   const submittingRef = useRef(submitting);
-  const testingRef = useRef(testing);
-
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => { submittingRef.current = submitting; }, [submitting]);
-  useEffect(() => { testingRef.current = testing; }, [testing]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -106,14 +103,14 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setErrorMessage('');
     setInfoMessage('');
     setShowPassword(false);
+    setShowConfirmPassword(false);
     setSubmitting(false);
-    setTesting(false);
-    setTestResult(null);
     setPassword('');
-    const timer = window.setTimeout(() => emailRef.current?.focus(), 60);
+    setConfirmPassword('');
+    const timer = window.setTimeout(() => identifierRef.current?.focus(), 60);
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !submittingRef.current && !testingRef.current) onCloseRef.current();
+      if (event.key === 'Escape' && !submittingRef.current) onCloseRef.current();
     };
     window.addEventListener('keydown', handleKeyDown);
 
@@ -125,86 +122,113 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSaveOverrides = () => {
-    setSupabaseLocalOverrides(urlOverride, keyOverride);
-    setTestResult('تم حفظ الإعدادات محلياً. أعد تحميل الصفحة لتطبيقها.');
-  };
-
-  const handleTestConnection = async () => {
-    if (!isOnline) { setTestResult('لا يوجد اتصال بالإنترنت'); return; }
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const { testSupabaseConnection } = await import('../utils/supabaseClient');
-      const diag = await testSupabaseConnection(urlOverride, keyOverride);
-      if (diag.ok) {
-        setTestResult(`✅ HTTP ${diag.status ?? ''} — ${diag.message}`);
-      } else {
-        const code = diag.code ? ` (${diag.code})` : '';
-        const details = diag.details ? ` — ${diag.details}` : '';
-        const hint = diag.hint ? ` — hint: ${diag.hint}` : '';
-        setTestResult(`❌ HTTP ${diag.status ?? ''}${code}: ${diag.message}${details}${hint}`);
-      }
-    } catch (e) {
-      setTestResult(`❌ خطأ: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setTesting(false);
-    }
-  };
-
   const switchMode = (nextMode: CloudAuthMode) => {
     if (submitting) return;
     setMode(nextMode);
     setErrorMessage('');
     setInfoMessage('');
     setPassword('');
+    setConfirmPassword('');
+  };
+
+  /** Persist the identity locally so the examiner is never blocked. */
+  const persistLocalIdentity = (name: string, email: string): CloudAuthUser => {
+    const deviceId = getOrCreateDeviceId();
+    saveExaminerProfile({ fullName: name, email, deviceId });
+    if (email) registerLocalAccount({ fullName: name, email });
+    return { id: `local-${deviceId}`, email: email || null, fullName: name || null };
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (submitting || !isOnline) return;
+    if (submitting) return;
 
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !password) {
-      setErrorMessage('أدخل البريد الإلكتروني وكلمة المرور.');
-      return;
-    }
-    if (mode === 'signup' && password.length < 6) {
-      setErrorMessage('⚠️ يجب أن يتكون الرمز السري من 6 أحرف أو أرقام على الأقل.');
-      return;
+    const trimmedIdentifier = identifier.trim();
+    const trimmedName = fullName.trim();
+
+    if (mode === 'signup') {
+      if (trimmedName.split(/\s+/).filter(Boolean).length < 3) {
+        setErrorMessage('⚠️ أدخل الاسم الثلاثي الكامل (مثال: أحمد محمد علي).');
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedIdentifier)) {
+        setErrorMessage('⚠️ صيغة البريد الإلكتروني غير صحيحة — مثال صحيح: name@example.com');
+        return;
+      }
+      if (password.length < 6) {
+        setErrorMessage('⚠️ يجب أن يتكون الرمز السري من 6 أحرف أو أرقام على الأقل.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setErrorMessage('⚠️ تأكيد الرمز السري غير مطابق.');
+        return;
+      }
+    } else {
+      if (!trimmedIdentifier || !password) {
+        setErrorMessage('أدخل البريد الإلكتروني (أو اسم المستخدم) والرمز السري.');
+        return;
+      }
     }
 
     setSubmitting(true);
     setErrorMessage('');
     setInfoMessage('');
+
+    // Sign-in accepts the email or a username known on this device.
+    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedIdentifier);
+    const localAccount = looksLikeEmail ? null : findLocalAccount(trimmedIdentifier);
+    const resolvedEmail = looksLikeEmail
+      ? trimmedIdentifier
+      : localAccount?.email ?? trimmedIdentifier;
+
     try {
+      // Offline-first: keep the examiner working locally and sync later.
+      if (!isOnline) {
+        const localUser = persistLocalIdentity(
+          trimmedName || localAccount?.fullName || '',
+          resolvedEmail,
+        );
+        setInfoMessage('✅ حُفظت بياناتك على هذا الجهاز. المزامنة السحابية عند عودة الشبكة.');
+        onSignedIn(localUser);
+        return;
+      }
+
       const { signInToCloud, signUpToCloud } = await import('../utils/supabaseAuth');
 
       if (mode === 'signup') {
-        const result = await signUpToCloud(trimmedEmail, password);
+        const result = await signUpToCloud(trimmedIdentifier, password, trimmedName);
         setPassword('');
+        setConfirmPassword('');
         if (result.alreadyRegistered) {
           setMode('signin');
-          setErrorMessage('⚠️ هذا البريد الإلكتروني مسجل مسبقاً. استخدم تبويب «تسجيل الدخول» أو استعد كلمة المرور من لوحة Supabase.');
+          setErrorMessage('⚠️ هذا البريد الإلكتروني مسجل مسبقاً. سجّل الدخول من التبويب الأول.');
           return;
         }
+        // The account exists on the server; the local identity is persisted
+        // immediately so a pending email confirmation never blocks fieldwork.
+        const localUser = persistLocalIdentity(trimmedName, trimmedIdentifier);
         if (result.needsEmailConfirmation || !result.user) {
-          setMode('signin');
-          setInfoMessage('✅ تم إنشاء الحساب. تحقق من بريدك الإلكتروني لتأكيد الحساب، ثم سجّل الدخول من هنا.');
+          setInfoMessage('✅ تم إنشاء الحساب. سيُفعّل المزامنة بعد تأكيد البريد الإلكتروني.');
+          onSignedIn({ ...localUser, id: result.user?.id ?? localUser.id });
           return;
         }
-        onSignedIn(result.user);
+        onSignedIn({ ...result.user, fullName: result.user.fullName ?? trimmedName });
         return;
       }
-      const user = await signInToCloud(trimmedEmail, password);
+
+      const user = await signInToCloud(resolvedEmail, password);
       setPassword('');
-      onSignedIn(user);
+      const name = user.fullName?.trim() || localAccount?.fullName || trimmedName;
+      persistLocalIdentity(name, user.email ?? resolvedEmail);
+      onSignedIn({ ...user, fullName: name || null });
     } catch (error) {
       setErrorMessage(friendlyAuthError(error));
     } finally {
       setSubmitting(false);
     }
   };
+
+  const submitLabel = mode === 'signup' ? 'تأكيد وإنشاء الحساب' : 'دخول';
 
   return (
     <div
@@ -214,24 +238,18 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
       }}
     >
       <section
-        className="auth-dialog"
+        className="auth-dialog auth-dialog--minimal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="cloud-auth-title"
-        aria-describedby="cloud-auth-note"
       >
         <header className="auth-dialog__header">
           <div className="auth-dialog__heading">
             <span className="auth-dialog__icon" aria-hidden="true">
-              <ShieldCheck size={22} />
+              <ShieldCheck size={20} />
             </span>
             <div className="auth-dialog__titles">
-              <h2 id="cloud-auth-title">
-                {mode === 'signin' ? 'تسجيل دخول الفاحص' : 'إنشاء حساب فاحص جديد'}
-              </h2>
-              <p id="cloud-auth-note">
-                المزامنة السحابية فقط. الفحص والحفظ المحلي يعملان دون تسجيل دخول.
-              </p>
+              <h2 id="cloud-auth-title">حساب الفاحص</h2>
             </div>
           </div>
           <button
@@ -239,9 +257,10 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
             className="icon-action shrink-0"
             onClick={onClose}
             disabled={submitting}
-            aria-label="إغلاق نافذة تسجيل الدخول"
+            aria-label="متابعة بدون تسجيل دخول"
+            title="متابعة بدون تسجيل دخول"
           >
-            <X size={19} aria-hidden="true" />
+            <X size={18} aria-hidden="true" />
           </button>
         </header>
 
@@ -267,46 +286,35 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
             </button>
           </div>
 
-          {!isOnline && (
-            <div className="notice notice--warn" role="status">
-              <WifiOff size={18} aria-hidden="true" />
-              <div>
-                <strong>لا يوجد اتصال بالإنترنت</strong>
-                <p>يمكنك متابعة الفحص الآن، ثم تسجيل الدخول والمزامنة عند عودة الشبكة.</p>
-              </div>
-            </div>
+          {mode === 'signup' && (
+            <label className="auth-field">
+              <span>الاسم الثلاثي الكامل</span>
+              <span className="auth-input">
+                <UserRound size={17} aria-hidden="true" />
+                <input
+                  type="text"
+                  name="full_name"
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  placeholder="أحمد محمد علي"
+                  autoComplete="name"
+                  disabled={submitting}
+                  required
+                />
+              </span>
+            </label>
           )}
 
           <label className="auth-field">
-            <span>Supabase URL</span>
-            <span className="auth-input">
-              <input dir="ltr" value={urlOverride} onChange={e => setUrlOverride(e.target.value)} placeholder="https://your-project.supabase.co" />
-            </span>
-          </label>
-          <label className="auth-field">
-            <span>Anon Key</span>
-            <span className="auth-input">
-              <input dir="ltr" value={keyOverride} onChange={e => setKeyOverride(e.target.value)} placeholder="sb_publishable_..." />
-            </span>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <button type="button" className="m3-btn" onClick={handleSaveOverrides}>حفظ الإعدادات محلياً</button>
-            <button type="button" className="m3-btn" onClick={handleTestConnection} disabled={testing || !isOnline}>
-              {testing ? 'جاري الفحص…' : '🔍 فحص الاتصال الآن'}
-            </button>
-          </div>
-          {testResult && <p className="auth-dialog__hint" style={{ whiteSpace: 'pre-wrap' }}>{testResult}</p>}
-
-          <label className="auth-field">
-            <span>البريد الإلكتروني</span>
+            <span>{mode === 'signup' ? 'البريد الإلكتروني' : 'البريد الإلكتروني أو اسم المستخدم'}</span>
             <span className="auth-input">
               <Mail size={17} aria-hidden="true" />
               <input
-                ref={emailRef}
-                type="email"
+                ref={identifierRef}
+                type={mode === 'signup' ? 'email' : 'text'}
                 name="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                value={identifier}
+                onChange={(event) => setIdentifier(event.target.value)}
                 placeholder="examiner@example.org"
                 autoComplete="username"
                 dir="ltr"
@@ -318,7 +326,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
           </label>
 
           <label className="auth-field">
-            <span>{mode === 'signup' ? 'الرمز السري (6 أحرف أو أرقام على الأقل)' : 'كلمة المرور'}</span>
+            <span>الرمز السري</span>
             <span className="auth-input">
               <LockKeyhole size={17} aria-hidden="true" />
               <input
@@ -336,7 +344,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
                 type="button"
                 className="auth-input__toggle"
                 onClick={() => setShowPassword((current) => !current)}
-                aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+                aria-label={showPassword ? 'إخفاء الرمز السري' : 'إظهار الرمز السري'}
                 aria-pressed={showPassword}
                 disabled={submitting}
               >
@@ -344,6 +352,36 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
               </button>
             </span>
           </label>
+
+          {mode === 'signup' && (
+            <label className="auth-field">
+              <span>تأكيد الرمز السري</span>
+              <span className="auth-input">
+                <LockKeyhole size={17} aria-hidden="true" />
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  name="confirm_password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="new-password"
+                  dir="ltr"
+                  disabled={submitting}
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-input__toggle"
+                  onClick={() => setShowConfirmPassword((current) => !current)}
+                  aria-label={showConfirmPassword ? 'إخفاء تأكيد الرمز السري' : 'إظهار تأكيد الرمز السري'}
+                  aria-pressed={showConfirmPassword}
+                  disabled={submitting}
+                >
+                  {showConfirmPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
+                </button>
+              </span>
+            </label>
+          )}
 
           {errorMessage && (
             <p className="auth-dialog__error" role="alert">
@@ -360,35 +398,27 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
           <button
             type="submit"
             className="m3-btn m3-btn--primary m3-btn--block auth-dialog__submit"
-            disabled={submitting || !isOnline}
+            disabled={submitting}
             aria-busy={submitting}
           >
             {submitting ? (
               <RefreshCw size={18} className="spin" aria-hidden="true" />
             ) : (
-              <LogIn size={18} aria-hidden="true" />
+              mode === 'signup'
+                ? <UserPlus size={18} aria-hidden="true" />
+                : <LogIn size={18} aria-hidden="true" />
             )}
-            <span>
-              {submitting
-                ? (mode === 'signup' ? 'جارٍ إنشاء الحساب…' : 'جارٍ التحقق…')
-                : (mode === 'signup' ? 'إنشاء الحساب' : 'تسجيل الدخول')}
-            </span>
+            <span>{submitting ? 'جاري المعالجة…' : submitLabel}</span>
           </button>
-
-          <p className="auth-dialog__hint">
-            {mode === 'signup'
-              ? 'يُنشئ هذا الحساب فاحصاً جديداً في Supabase Auth. قد يطلب المشرف تأكيد البريد الإلكتروني قبل أول تسجيل دخول.'
-              : 'تُنشأ الحسابات أيضاً من مشرف النظام عبر Authentication -> Users في لوحة Supabase. تبقى السجلات على هذا الجهاز حتى بعد تسجيل الخروج.'}
-          </p>
         </form>
 
         <button
           type="button"
-          className="auth-bypass"
-          onClick={onContinueWithoutAccount}
+          className="auth-dialog__skip"
+          onClick={onClose}
           disabled={submitting}
         >
-          ⚡ المتابعة والمزامنة السريعة بكود الفاحص فقط (بدون بريد إلكتروني)
+          متابعة بدون تسجيل دخول
         </button>
       </section>
     </div>

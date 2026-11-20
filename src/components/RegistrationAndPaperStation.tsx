@@ -390,8 +390,8 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
               </div>
             </div>
             <p className="field-hint session-bar__hint">
-              تُحفظ هذه البيانات تلقائياً لهذا الصباح وتُعاد تعبئتها للتلميذ التالي.
-              {identityLocked ? ' مقفلة الآن حفاظاً على سلامة السجل أثناء الفحص.' : ''}
+              تُحفظ تلقائياً وتُعاد للتلميذ التالي.
+              {identityLocked ? ' مقفلة أثناء الفحص.' : ''}
             </p>
           </div>
         )}
@@ -402,13 +402,13 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
           <div className="card-head">
             <div>
               <h2 className="card-head__title"><UserCheck size={20} aria-hidden="true" /> تسجيل سريع</h2>
-              <p className="card-head__sub">الخطوة 1 من WHOeyes — بسيط وسريع</p>
+              <p className="card-head__sub">الخطوة 1 — تسجيل سريع</p>
             </div>
           </div>
 
           {!stationReady && (
             <p className="field-hint mb-3">
-              أكمل بيانات المدرسة والقطاع وكود الفاحص والجنس والنظارة والموافقة لتفعيل زر المتابعة.
+              أكمل بيانات المدرسة والقطاع وكود الفاحص والموافقة.
             </p>
           )}
 
@@ -632,7 +632,7 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
             <p className="field-hint mt-2">ابدأ المؤقت أولاً لتفعيل شرائح حدة البصر.</p>
           )}
           <p className="field-hint mt-2">
-            حد الإحالة الثنائي وفق WHO 2025: 6/12 (LogMAR ≥ 0.30). رمز 88 = طفل غير قابل للفحص ويُحال وجوباً.
+            حد الإحالة: 6/12 (LogMAR ≥ 0.30) — الرمز 88 يُحال وجوباً.
           </p>
         </section>
       )}
@@ -640,9 +640,9 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
       {/* Mandatory 2-minute accommodative washout between Station 1 and Station 2. */}
       <div className="m3-card card-pad flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <div className="font-semibold text-sm">⏱️ فترة الراحة البصرية الإلزامية بين المحطتين</div>
+          <div className="font-semibold text-sm">⏱️ راحة بصرية بين المحطتين</div>
           <div className="text-xs text-[var(--m3-muted)] mt-0.5">
-            دقيقتان Washout لاسترخاء التكيّف بين محطة اللوحة الورقية ومحطة الفحص الرقمي. المؤقت إرشادي ولا يمنع المتابعة.
+            دقيقتان لاسترخاء التكيّف (المؤقت إرشادي ولا يمنع المتابعة).
           </div>
         </div>
         <WashoutTimer variant="light" />

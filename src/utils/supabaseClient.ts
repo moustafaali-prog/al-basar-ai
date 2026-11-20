@@ -102,6 +102,8 @@ export function mapRecordToSupabaseRow(record: StudentScreeningRecord): Record<s
   return {
     child_id: record.Child_ID,
     examiner_id: record.Examiner_ID,
+    examiner_full_name: n(record.Examiner_Full_Name),
+    device_id: n(record.Device_ID),
     paper_examiner_id: n(record.Paper_Examiner_ID),
     paper_started_at: n(record.Paper_Started_At),
     paper_completed_at: n(record.Paper_Completed_At),
@@ -178,6 +180,8 @@ export function mapSupabaseRowToRecord(row: Record<string, unknown>): StudentScr
   return {
     Child_ID: String(row.child_id ?? ''),
     Examiner_ID: String(row.examiner_id ?? ''),
+    Examiner_Full_Name: str(row.examiner_full_name),
+    Device_ID: str(row.device_id),
     _syncStatus: 'synced',
     Paper_Examiner_ID: str(row.paper_examiner_id),
     Paper_Started_At: str(row.paper_started_at),

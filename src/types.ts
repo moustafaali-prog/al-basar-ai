@@ -46,6 +46,10 @@ export interface WHOScreeningAssessment {
 export interface StudentScreeningRecord {
   Child_ID: string;
   Examiner_ID: string;
+  /** Full triple name of the examiner on duty (e.g. "أحمد محمد علي"). */
+  Examiner_Full_Name?: string;
+  /** Stable per-device identifier used to attribute every record. */
+  Device_ID?: string;
   /** Optional local sync metadata; not persisted to Supabase. */
   _syncStatus?: 'pending' | 'synced';
 

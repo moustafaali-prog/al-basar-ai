@@ -1196,7 +1196,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               التصوير العيني الدقيق
             </h2>
             <p className="card-head__sub">
-              تقييم الحدقة والانعكاس القرني وتدلي الجفن. تعمل كل الحسابات محلياً على الجهاز دون إنترنت.
+              تقييم الحدقة والانعكاس القرني وتدلي الجفن.
             </p>
           </div>
           <span className="pill pill--primary">
@@ -1319,7 +1319,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           {cameraActive && !burstActive && (
             <p className="capture-burst-note">
               <Sparkles size={13} aria-hidden="true" />
-              يُلتقط ٣ إطارات خلال ٣٠٠ مللي ثانية بدقة المستشعر الكاملة ثم تُدمج مكانياً لإلغاء اهتزاز اليد.
+              ٣ إطارات خلال ٣٠٠ مللي ثانية لخفض اهتزاز اليد.
             </p>
           )}
 
@@ -1450,7 +1450,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
         <p className="field-hint mt-2 flex items-start gap-1.5">
           <ShieldCheck size={13} aria-hidden="true" />
-          الحسابات تعتمد على قطر القزحية الأفقي (HVID) وقياس محلي بالكامل. لا تُرفع الصور إلى أي خدمة سحابية.
+          قياس محلي بالكامل — لا تُرفع الصور.
         </p>
       </section>
 
@@ -1462,7 +1462,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               القياسات والتقييم السريري
             </h2>
             <p className="card-head__sub">
-              تُحدّث القيم فور تعديل نقاط الحدقة أو الانعكاس أو حد الجفن على الصورة.
+              تُحدّث القيم فور تعديل نقاط الصورة.
             </p>
           </div>
           <span className="pill pill--neutral">
@@ -1548,7 +1548,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
           {externalEyeScreened && externalEyeFindings.length > 0 && (
             <p className="external-gate-summary" role="status">
-              تم تسجيل {externalEyeFindings.length} ملاحظة خارجية. سيُرفع العلم السريري وفقاً للضوابط.
+              تم تسجيل {externalEyeFindings.length} ملاحظة خارجية.
             </p>
           )}
         </div>
@@ -1703,7 +1703,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 </button>
               </div>
               <p className="field-hint">
-                يجب أن تعكس هذه القيمة طريقة القراءة الفعلية: تلقائي، إعادة تصوير، أو تحديد يدوي على الصورة.
+                اختر طريقة القراءة الفعلية.
               </p>
             </div>
           </div>

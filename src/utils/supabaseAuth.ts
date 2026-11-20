@@ -10,6 +10,8 @@ import { isSupabaseConfigured } from './supabaseConfig';
 export interface CloudAuthUser {
   id: string;
   email: string | null;
+  /** Full triple name supplied at sign-up (or restored from the profile). */
+  fullName: string | null;
 }
 
 export class CloudAuthError extends Error {
@@ -31,8 +33,16 @@ const getClient = async () => {
 };
 
 const toCloudUser = (
-  user: { id: string; email?: string | null } | null | undefined,
-): CloudAuthUser | null => (user ? { id: user.id, email: user.email ?? null } : null);
+  user: {
+    id: string;
+    email?: string | null;
+    user_metadata?: { full_name?: string | null } | null;
+  } | null | undefined,
+): CloudAuthUser | null => (user ? {
+  id: user.id,
+  email: user.email ?? null,
+  fullName: user.user_metadata?.full_name?.trim() || null,
+} : null);
 
 /** Restore a persisted session without making a network request first. */
 export async function loadCloudAuthUser(): Promise<CloudAuthUser | null> {
@@ -74,7 +84,6 @@ export async function signInToCloud(email: string, password: string): Promise<Cl
     email: email.trim(),
     password,
   });
-
   if (error) {
     const code = (error as { code?: string }).code ?? 'SIGN_IN_FAILED';
     const status = (error as { status?: number }).status ?? 0;
@@ -100,10 +109,17 @@ export interface CloudSignUpResult {
  * Create a new examiner account through Supabase Auth
  * (`POST /auth/v1/signup`, invoked by the SDK).
  *
+ * The full triple name is attached to the account as `user_metadata.full_name`
+ * so every synced record can be attributed to the examiner.
+ *
  * The project supervisor may disable public sign-ups in Supabase; in that case
  * the returned error is translated by the modal into a clear Arabic message.
  */
-export async function signUpToCloud(email: string, password: string): Promise<CloudSignUpResult> {
+export async function signUpToCloud(
+  email: string,
+  password: string,
+  fullName = '',
+): Promise<CloudSignUpResult> {
   const client = await getClient();
   if (!client) {
     throw new CloudAuthError('Supabase is not configured.', 'CLOUD_NOT_CONFIGURED');
@@ -112,6 +128,7 @@ export async function signUpToCloud(email: string, password: string): Promise<Cl
   const { data, error } = await client.auth.signUp({
     email: email.trim(),
     password,
+    options: { data: { full_name: fullName.trim() } },
   });
 
   if (error) {
