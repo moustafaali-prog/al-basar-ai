@@ -29,33 +29,37 @@ type CloudAuthMode = 'signin' | 'signup';
 const friendlyAuthError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as { code?: string } | null)?.code ?? '';
+  const status = (error as { status?: number } | null)?.status ?? 0;
 
   if (code === 'CLOUD_NOT_CONFIGURED') {
     return 'سحابة المشرف غير مهيأة في نسخة التطبيق هذه. تواصل مع مدير النظام.';
   }
-  if (/invalid login credentials/i.test(message)) {
+  if (code === 'invalid_credentials' || /invalid login credentials/i.test(message)) {
     return '⚠️ البريد الإلكتروني أو الرمز السري غير صحيح، أو أن الحساب غير منشأ بعد في لوحة Authentication -> Users داخل Supabase.';
   }
-  if (/email not confirmed/i.test(message)) {
+  if (code === 'email_not_confirmed' || /email not confirmed/i.test(message)) {
     return '⚠️ الحساب بانتظار تأكيد البريد الإلكتروني — فعّل خيار Auto Confirm User في لوحة Supabase.';
   }
-  if (/password should be at least 6 characters/i.test(message)) {
+  if (code === 'weak_password' || /password should be at least 6 characters/i.test(message)) {
     return '⚠️ يجب أن يتكون الرمز السري من 6 أحرف أو أرقام على الأقل.';
   }
-  if (/user already registered|already been registered/i.test(message)) {
+  if (code === 'user_already_exists' || /user already registered|already been registered/i.test(message)) {
     return '⚠️ هذا البريد الإلكتروني مسجل مسبقاً. استخدم تبويب «تسجيل الدخول» أو استعد كلمة المرور من لوحة Supabase.';
   }
-  if (/signups? (are )?disabled|signup is disabled/i.test(message)) {
+  if (code === 'signup_disabled' || /signups? (are )?disabled|signup is disabled/i.test(message)) {
     return '⚠️ إنشاء الحسابات الجديدة معطّل في إعدادات Supabase Auth. اطلب من المشرف تفعيل Sign Ups أو إنشاء الحساب من Authentication -> Users.';
   }
-  if (/rate limit|too many requests|over_email_send_rate_limit/i.test(message)) {
-    return 'محاولات دخول كثيرة. انتظر دقيقة ثم أعد المحاولة.';
+  if (code === 'email_address_invalid' || /email address .* is invalid|invalid email/i.test(message)) {
+    return '⚠️ صيغة البريد الإلكتروني غير صحيحة — مثال صحيح: name@example.com';
   }
-  if (/failed to fetch|network|fetch error/i.test(message)) {
+  if (code === 'over_email_send_rate_limit' || code === 'over_request_rate_limit' || /rate limit|too many requests/i.test(message)) {
+    return 'محاولات كثيرة. انتظر دقيقة ثم أعد المحاولة.';
+  }
+  if (code === 'validation_failed' || /failed to fetch|network|fetch error/i.test(message)) {
     return 'تعذر الوصول إلى خادم السحابة. تحقق من اتصال الإنترنت.';
   }
-  if (/invalid email/i.test(message)) {
-    return 'صيغة البريد الإلكتروني غير صحيحة.';
+  if (status === 400 || status === 422) {
+    return `⚠️ تعذر إكمال العملية: ${message}`;
   }
   return 'تعذر إكمال العملية. تحقق من البيانات ثم أعد المحاولة.';
 };
@@ -82,7 +86,6 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     try { return localStorage.getItem('albasar_supabase_anon_key') || SUPABASE_ANON_KEY_VALUE; } catch { return SUPABASE_ANON_KEY_VALUE; }
   });
   const [testResult, setTestResult] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -183,7 +186,6 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
         onSignedIn(result.user);
         return;
       }
-
       const user = await signInToCloud(trimmedEmail, password);
       setPassword('');
       onSignedIn(user);

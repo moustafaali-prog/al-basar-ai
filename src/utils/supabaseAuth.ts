@@ -14,11 +14,13 @@ export interface CloudAuthUser {
 
 export class CloudAuthError extends Error {
   code: string;
+  status: number;
 
-  constructor(message: string, code = 'CLOUD_AUTH_ERROR') {
+  constructor(message: string, code = 'CLOUD_AUTH_ERROR', status = 0) {
     super(message);
     this.name = 'CloudAuthError';
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -75,7 +77,8 @@ export async function signInToCloud(email: string, password: string): Promise<Cl
 
   if (error) {
     const code = (error as { code?: string }).code ?? 'SIGN_IN_FAILED';
-    throw new CloudAuthError(error.message, code);
+    const status = (error as { status?: number }).status ?? 0;
+    throw new CloudAuthError(error.message, code, status);
   }
 
   const user = toCloudUser(data.user);
@@ -113,7 +116,8 @@ export async function signUpToCloud(email: string, password: string): Promise<Cl
 
   if (error) {
     const code = (error as { code?: string }).code ?? 'SIGN_UP_FAILED';
-    throw new CloudAuthError(error.message, code);
+    const status = (error as { status?: number }).status ?? 0;
+    throw new CloudAuthError(error.message, code, status);
   }
 
   const user = toCloudUser(data.user);

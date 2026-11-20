@@ -159,6 +159,104 @@ export function mapRecordToSupabaseRow(record: StudentScreeningRecord): Record<s
   };
 }
 
+/**
+ * Reverse mapper: Supabase lowercase row -> local `StudentScreeningRecord`.
+ * Mirrors `mapRecordToSupabaseRow` so pulled records keep the exact same
+ * 1:1 field contract used when pushing them.
+ */
+export function mapSupabaseRowToRecord(row: Record<string, unknown>): StudentScreeningRecord {
+  const str = (value: unknown): string | undefined =>
+    value === null || value === undefined ? undefined : String(value);
+  const num = (value: unknown): number | undefined =>
+    value === null || value === undefined ? undefined : Number(value);
+  const bool = (value: unknown): boolean | undefined =>
+    value === null || value === undefined ? undefined : Boolean(value);
+
+  const whoScreening = (row.who_screening ?? null) as StudentScreeningRecord['WHO_Screening'];
+  const externalFindings = row.external_eye_findings;
+
+  return {
+    Child_ID: String(row.child_id ?? ''),
+    Examiner_ID: String(row.examiner_id ?? ''),
+    _syncStatus: 'synced',
+    Paper_Examiner_ID: str(row.paper_examiner_id),
+    Paper_Started_At: str(row.paper_started_at),
+    Paper_Completed_At: str(row.paper_completed_at),
+    Smart_Examiner_ID: str(row.smart_examiner_id),
+    Smart_Started_At: str(row.smart_started_at),
+    Smart_Completed_At: str(row.smart_completed_at),
+    Parental_Consent: num(row.parental_consent) ?? 0,
+    Child_Assent: str(row.child_assent) as StudentScreeningRecord['Child_Assent'],
+    Examination_Date: str(row.examination_date) ?? new Date().toISOString(),
+    School_Name: str(row.school_name) ?? '',
+    School_Sector: str(row.school_sector) ?? '',
+    Grade_Level: num(row.grade_level) ?? 0,
+    Age_Years: num(row.age_years) ?? 0,
+    Gender: str(row.gender) ?? '',
+    Wears_Glasses: num(row.wears_glasses) ?? 0,
+    WHO_PreScreen: (row.who_pre_screen ?? undefined) as StudentScreeningRecord['WHO_PreScreen'],
+    WHO_Screening: whoScreening ?? undefined,
+    WHO_Referral_Flag: num(row.who_referral_flag),
+    Crossover_Sequence: str(row.crossover_sequence) ?? '',
+    Paper_Snellen_OD: str(row.paper_snellen_od) ?? '',
+    Paper_LogMAR_OD: num(row.paper_logmar_od) ?? 0,
+    Paper_Snellen_OS: str(row.paper_snellen_os) ?? '',
+    Paper_LogMAR_OS: num(row.paper_logmar_os) ?? 0,
+    Paper_LogMAR_Worse: num(row.paper_logmar_worse),
+    Paper_Time_Sec: num(row.paper_time_sec) ?? 0,
+    Paper_Referral: num(row.paper_referral) ?? 0,
+    Smart_Snellen_OD: str(row.smart_snellen_od) ?? '',
+    Smart_Acuity_OD_Below_Test_Range: bool(row.smart_acuity_od_below_test_range),
+    Smart_LogMAR_OD: num(row.smart_logmar_od) ?? 0,
+    Smart_Snellen_OS: str(row.smart_snellen_os) ?? '',
+    Smart_Acuity_OS_Below_Test_Range: bool(row.smart_acuity_os_below_test_range),
+    Smart_LogMAR_OS: num(row.smart_logmar_os) ?? 0,
+    Smart_LogMAR_Worse: num(row.smart_logmar_worse),
+    Smart_IOD_LogMAR: num(row.smart_iod_logmar) ?? 0,
+    Smart_Time_Sec: num(row.smart_time_sec) ?? 0,
+    Hirschberg_Asym_mm: num(row.hirschberg_asym_mm) ?? 0,
+    Hirschberg_Prism_Diopters: num(row.hirschberg_prism_diopeters) ?? 0,
+    MRD1_Min_mm: num(row.mrd1_min_mm) ?? 0,
+    Triage_Ocular_Flag: num(row.triage_ocular_flag) ?? 0,
+    AI_Quality_Flag: num(row.ai_quality_flag),
+    Asthenopia_Score: num(row.asthenopia_score) ?? 0,
+    Final_Triage_Referral: num(row.final_triage_referral) ?? 0,
+    Referral_Urgency: (str(row.referral_urgency) ?? 'ROUTINE') as StudentScreeningRecord['Referral_Urgency'],
+    Referral_PHCC: str(row.referral_phcc) ?? '',
+    FollowUp_Status: num(row.follow_up_status) ?? 0,
+    Spectacles_Prescribed_Fitted: num(row.spectacles_prescribed_fitted),
+    Gold_Standard_Confirmed: num(row.gold_standard_confirmed),
+    Gold_Standard_Method: str(row.gold_standard_method),
+    Gold_Standard_Examiner_ID: str(row.gold_standard_examiner_id),
+    Gold_Standard_Date: str(row.gold_standard_date),
+    Gold_Standard_Criteria: str(row.gold_standard_criteria),
+    Gold_Standard_Masked: str(row.gold_standard_masked) as StudentScreeningRecord['Gold_Standard_Masked'],
+    Eye_Photo_URL: str(row.eye_photo_url),
+    // The dedicated column mirrors WHO_Screening.externalEyeFindings for the
+    // supervisor review workflow; keep both in sync when reading a row.
+    ...(Array.isArray(externalFindings) && whoScreening
+      ? { WHO_Screening: { ...whoScreening, externalEyeFindings: externalFindings as string[] } }
+      : {}),
+  };
+}
+
+/**
+ * Fetch every screening row the current role may read. Uses the Supabase
+ * client so RLS decides visibility; falls back to the public anon key when no
+ * examiner session exists.
+ */
+export async function fetchScreeningRecords(): Promise<StudentScreeningRecord[]> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const { data, error } = await client.from(TABLE).select('*');
+  if (error) {
+    throw new Error(`HTTP ${(error as { status?: number }).status ?? ''}: ${error.message}`);
+  }
+  const rows = (data ?? []) as Record<string, unknown>[];
+  return rows.map(mapSupabaseRowToRecord);
+}
+
 export interface SupabaseDiagnostic {
   ok: boolean;
   status?: number;

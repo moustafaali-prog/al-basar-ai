@@ -1987,10 +1987,3 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   color: var(--m3-primary); font-size: 13px; font-weight: 700; border-radius: 12px;
 }
 .cloud-banner__actions { display: flex; gap: 8px; flex-shrink: 0; }
-
-/* Keep cloud button visible on mobile */
-.topbar__quick-label--short { display: inline; }
-@media (max-width: 720px) {
-  .topbar__quick-label { display: none; }
-  .topbar__quick-label--short { display: inline; }
-}

@@ -226,6 +226,10 @@ export default function App() {
   // Cloud auth is optional: local screening always works, cloud sync is opt-in.
   const [cloudUser, setCloudUser] = useState<CloudAuthUser | null>(null);
   const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(false);
+  /** True once the lazy auth bootstrap has finished (or Supabase is absent). */
+  const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
+  /** Controls the dismissible "sync your records" hint banner. */
+  const [showCloudBanner, setShowCloudBanner] = useState<boolean>(true);
   const pendingCloudSync = useRef(false);
 
   useEffect(() => {
@@ -254,6 +258,7 @@ export default function App() {
   // Initialise cloud auth lazily after first paint — it does not block the offline-first UI.
   useEffect(() => {
     if (!isSupabaseConfigured()) {
+      setCloudAuthReady(true);
       return;
     }
     let cancelled = false;
@@ -270,6 +275,8 @@ export default function App() {
         if (cancelled) unsubscribe?.();
       } catch {
         // Offline-first: ignore cloud session restoration errors.
+      } finally {
+        if (!cancelled) setCloudAuthReady(true);
       }
     }, 800);
     return () => {
@@ -398,6 +405,43 @@ export default function App() {
     } catch (e) {
       console.error(e);
       notify(`خطأ أثناء المزامنة: ${e instanceof Error ? e.message : String(e)}`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  /**
+   * Pull the latest rows from Supabase and merge them into the local offline
+   * database. RLS decides which rows the current role may read.
+   */
+  const pullLatestFromCloud = async () => {
+    if (!isOnline) {
+      notify('وضع العمل بدون إنترنت. لا يمكن سحب أحدث السجلات.', 'info');
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      notify('سحابة المشرف غير مُعدة.', 'info');
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const { fetchScreeningRecords } = await import('./utils/supabaseClient');
+      const incoming = await fetchScreeningRecords();
+      if (incoming.length === 0) {
+        notify('لا توجد سجلات في السحابة.', 'info');
+        return;
+      }
+      const merged = [...records];
+      for (const rec of incoming) {
+        const idx = merged.findIndex(r => r.Child_ID === rec.Child_ID);
+        if (idx >= 0) merged[idx] = rec;
+        else merged.push(rec);
+      }
+      if (persistRecords(merged)) setRecords(merged);
+      notify(`تم سحب ${incoming.length} سجل من السحابة ودمجها محلياً.`, 'success');
+    } catch (e) {
+      console.error(e);
+      notify(`فشل سحب السجلات من السحابة: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setIsSyncing(false);
     }
