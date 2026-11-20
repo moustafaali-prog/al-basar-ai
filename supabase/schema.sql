@@ -292,6 +292,32 @@ create policy "albasar photo open update"
   using (bucket_id = 'screening-photos')
   with check (bucket_id = 'screening-photos');
 
-grant all on storage.objects to anon, authenticated;
+-- ⚠️ لا تُنفّذ "grant all on storage.objects to anon, authenticated" هنا:
+--    - على Supabase Cloud، storage.objects مملوك لحساب postgres (storage.super_user)
+--      وقد منحه Supabase أصلاً كل الصلاحيات لـ anon/authenticated
+--      (migration 0046)؛ فالسطر كان تكراراً بلا فائدة.
+--    - grant all يمنح DELETE غير مبرّر، ويجعل السكريبت يفشل بـ 42501
+--      "must be owner of table objects" في أي مشروع غيّر فيه storage.super_user.
+--    - الوصول للصور يُدار بالكامل عبر سياسات RLS أعلاه.
+--
+-- 📋 أخلاقيات البحث (IRB): الحاوية عامة (public = true) لأن التطبيق يبني رابط
+--    الصورة مباشرة عبر getPublicUrl دون توقيع روابط برمجياً. الصور مُرمّزة
+--    بـ Child_ID فقط ولا تحتوي أسماء التلاميذ. فور انتهاء جمع البيانات يجب
+--    تحويل الحاوية إلى private (public = false) وحصر القراءة بحساب المشرف فقط.
+
+-- لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً، فالحذف ممنوع عن
+-- anon/authenticated حتى لو منحهم Supabase صلاحية الجدول على مستوى المنصة.
+
+-- صلاحيات جدول storage (اختيارية + لا تُفشل السكريبت): Supabase منح
+-- anon/authenticated صلاحيات SELECT/INSERT/UPDATE/DELETE أصلاً (migration 0046).
+-- هذا المقطع يضمن الـ SELECT/INSERT/UPDATE فقط إن اختلفت إعدادات المشروع،
+-- ولا يقوّي DELETE أبداً.
+do $$
+begin
+  grant select, insert, update on storage.objects to anon, authenticated;
+exception
+  when insufficient_privilege then
+    raise notice 'تعذّر منح صلاحيات storage.objects (غير مالك للجدول) — سياسات RLS أعلاه تكفي.';
+end $$;
 
 NOTIFY pgrst, 'reload schema';
