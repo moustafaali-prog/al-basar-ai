@@ -65,7 +65,16 @@ update auth.users
 
 ## الخيار ٢ (سريع): الأعمدة الناقصة + حاوية الصور
 
-نفّذ في SQL Editor محتوى **`supabase/quick-migration.sql`** كاملاً (5 أعمدة + RLS + الحاوية + السياسات).
+نفّذ في SQL Editor محتوى **`supabase/quick-migration.sql`** كاملاً (6 أعمدة + RLS + الحاوية + السياسات).
+
+الأعمدة الستة: `external_eye_findings` · `eye_photo_url` · `owner_id` ·
+`examiner_full_name` · `device_id` · `examination_date`
+
+> هذا الملف **لا ينشئ الجدول** — إنه ترحيل (migration) لمشروع قائم فيه
+> `public.student_screening_records`. إن لم يكن الجدول موجوداً، تُتخطى خطوات
+> الجدول برسالة `NOTICE` واضحة، بينما **تُنشأ الحاوية وسياسات التخزين فعلاً**
+> (كل خطوة مرتبطة بالجدول داخل كتلة `DO` واحدة، فلا يُلغى السكربت بالكامل).
+> لمشروع جديد استخدم `schema.sql` مباشرة.
 
 ### ⚠️ لماذا لا يوجد `grant all on storage.objects to anon, authenticated`؟
 
@@ -113,6 +122,11 @@ where table_schema = 'public' and table_name = 'student_screening_records'
   and column_name in ('external_eye_findings','eye_photo_url','owner_id','examiner_full_name','device_id','examination_date')
 order by column_name;
 ```
+
+> ⚠️ `examination_date` تحديداً: التطبيق يكتب هذا العمود في كل مزامنة.
+> لو غاب عن الجدول، يفشل الـ upsert بـ `PGRST204` — لذلك هو ضمن قائمة
+> `add column if not exists` في **الملفين** (وهو أصلح خطأ كان يوقف
+> إنشاء الفهرس `idx_ssr_examination_date` في `schema.sql`).
 
 ### ٢) الحاوية والسياسات (يجب أن يعيد 4 صفوف)
 ```sql

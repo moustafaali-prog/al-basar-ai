@@ -36,50 +36,61 @@ as $$
   select coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin', false);
 $$;
 
--- ---------- 2) الأعمدة الناقصة ----------
-alter table public.student_screening_records
-  add column if not exists external_eye_findings jsonb default '[]'::jsonb,
-  add column if not exists eye_photo_url text,
-  add column if not exists owner_id uuid default auth.uid(),
-  add column if not exists examiner_full_name text,
-  add column if not exists device_id text;
+-- ---------- 2 + 3) الأعمدة الناقصة + RLS الصارم على جدول السجلات ----------
+-- كل ما يخص جدول السجلات داخل كتلة DO واحدة: إن كان الجدول غير موجود
+-- (مشروع جديد) تُتخطى هذه الخطوات برسالة واضحة بدل أن يفشل السكربت
+-- بالكامل ويلغي إنشاء الحاوية والسياسات (SQL Editor يعمل داخل معاملة).
+do $$
+begin
+  if to_regclass('public.student_screening_records') is null then
+    raise notice 'الجدول public.student_screening_records غير موجود — تُتخطى خطوات الجدول. شغّل schema.sql أولاً (Bootstrap كامل).';
+    return;
+  end if;
 
--- ---------- 3) RLS الصارم على جدول السجلات ----------
-alter table public.student_screening_records enable row level security;
+  alter table public.student_screening_records
+    add column if not exists external_eye_findings jsonb default '[]'::jsonb,
+    add column if not exists eye_photo_url text,
+    add column if not exists owner_id uuid default auth.uid(),
+    add column if not exists examiner_full_name text,
+    add column if not exists device_id text,
+    add column if not exists examination_date timestamptz;
 
--- إسقاط أي سياسة مفتوحة سابقة (تمنع تسريب بيانات التلاميذ عبر anon).
-drop policy if exists "albasar open select" on public.student_screening_records;
-drop policy if exists "albasar open insert" on public.student_screening_records;
-drop policy if exists "albasar open update" on public.student_screening_records;
-drop policy if exists "allow_anon_all" on public.student_screening_records;
-drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
-drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
-drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
+  alter table public.student_screening_records enable row level security;
 
--- الفاحص يرى/يضيف/يحدث سجلاته فقط، والمشرف يرى ويدير كل سجلات الطلبة.
-create policy "albasar_select_own_or_admin"
-  on public.student_screening_records for select
-  to authenticated
-  using (owner_id = auth.uid() or public.is_albasar_admin());
+  -- إسقاط أي سياسة مفتوحة سابقة (تمنع تسريب بيانات التلاميذ عبر anon).
+  drop policy if exists "albasar open select" on public.student_screening_records;
+  drop policy if exists "albasar open insert" on public.student_screening_records;
+  drop policy if exists "albasar open update" on public.student_screening_records;
+  drop policy if exists "allow_anon_all" on public.student_screening_records;
+  drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
+  drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
+  drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
 
-create policy "albasar_insert_own_or_admin"
-  on public.student_screening_records for insert
-  to authenticated
-  with check (owner_id = auth.uid() or public.is_albasar_admin());
+  -- الفاحص يرى/يضيف/يحدث سجلاته فقط، والمشرف يرى ويدير كل سجلات الطلبة.
+  create policy "albasar_select_own_or_admin"
+    on public.student_screening_records for select
+    to authenticated
+    using (owner_id = auth.uid() or public.is_albasar_admin());
 
-create policy "albasar_update_own_or_admin"
-  on public.student_screening_records for update
-  to authenticated
-  using (owner_id = auth.uid() or public.is_albasar_admin())
-  with check (owner_id = auth.uid() or public.is_albasar_admin());
+  create policy "albasar_insert_own_or_admin"
+    on public.student_screening_records for insert
+    to authenticated
+    with check (owner_id = auth.uid() or public.is_albasar_admin());
+
+  create policy "albasar_update_own_or_admin"
+    on public.student_screening_records for update
+    to authenticated
+    using (owner_id = auth.uid() or public.is_albasar_admin())
+    with check (owner_id = auth.uid() or public.is_albasar_admin());
+
+  -- 🔒 سحب صلاحيات anon من جدول السجلات (دفاع في العمق):
+  --    RLS هي الحاجز الحقيقي (لا توجد أي سياسة لـ anon)، لكن سحب GRANT
+  --    يجعل التبويق واضحاً: المفتاح المنشور لا يفتح جدول التلاميذ إطلاقاً.
+  revoke select, insert, update, delete on public.student_screening_records from anon;
+end $$;
 
 -- لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً، فالحذف ممنوع
 -- حتى على مستوى الدور الإداري. حمايتان: RLS + غياب صلاحية DELETE.
-
--- 🔒 سحب صلاحيات anon من جدول السجلات (دفاع في العمق):
---    RLS هي الحاجز الحقيقي (لا توجد أي سياسة لـ anon)، لكن سحب GRANT
---    يجعل التبويق واضحاً: المفتاح المنشور لا يفتح جدول التلاميذ إطلاقاً.
-revoke select, insert, update, delete on public.student_screening_records from anon;
 
 -- ---------- 4) حاوية صور العين (خاصة تماماً) ----------
 -- المسار المعتمد في imageCompress.ts هو: {authUserId}/{childId}/{timestamp}.jpg
