@@ -45,12 +45,16 @@ type ExtendedTrackConstraintSet = MediaTrackConstraintSet & {
   focusMode?: string;
   exposureMode?: string;
   whiteBalanceMode?: string;
+  /** Rear-camera torch (flash) — present on `MediaTrackSupportedConstraints` only. */
+  torch?: boolean;
 };
 
 type ExtendedTrackCapabilities = MediaTrackCapabilities & {
   focusMode?: string[];
   exposureMode?: string[];
   whiteBalanceMode?: string[];
+  /** True when the device exposes a hardware torch for this track. */
+  torch?: boolean;
 };
 
 interface StabilityTracker {
@@ -159,6 +163,12 @@ interface OcularBiometryProps {
   setExternalEyeOther: (value: string) => void;
   externalEyeScreened: boolean;
   setExternalEyeScreened: (value: boolean) => void;
+  /**
+   * Receives the compressed diagnostic-clarity photo of the current child.
+   * App.tsx stores the blob in IndexedDB (keyed by Child_ID) and uploads it to
+   * Supabase Storage during the next cloud sync.
+   */
+  onEyePhotoCaptured?: (photo: { blob: Blob; dataUrl: string }) => void;
   onProceedToCDSS: () => void;
 }
 
@@ -173,20 +183,19 @@ interface OcularApplyResult {
   mrdAvailable: boolean;
 }
 
+/**
+ * WHO 2025 / AAPOS pediatric external-eye red flags.
+ * Exactly five findings; every one of them is visible when the examiner opens
+ * the "abnormal" list. `LEUKOCORIA`, `CORNEAL_HAZINESS`, `ANISOCORIA` and
+ * `EYE_MISALIGNMENT` mandate an urgent (48 h) referral, `SCLERAL_REDNESS`
+ * mandates a standard (2-week PHCC) referral.
+ */
 const EYE_FINDINGS = [
-  { id: 'EYELID_CRUST_OR_PUS', short: 'إفرازات / قشور جفن', tone: 'warn' },
-  { id: 'SCLERAL_REDNESS', short: 'احمرار الصلبة', tone: 'urgent' },
-  { id: 'EYE_DISCHARGE', short: 'إفرازات عينية', tone: 'warn' },
-  { id: 'CORNEAL_HAZINESS', short: 'عتامة القرنية', tone: 'urgent' },
-  { id: 'EYE_MISALIGNMENT', short: 'انحراف ظاهر', tone: 'urgent' },
-  { id: 'OTHER', short: 'ملاحظة أخرى', tone: 'warn' },
-] as const;
-
-const EXTERNAL_GATE_IDS = [
-  'EYELID_CRUST_OR_PUS',
-  'EYE_DISCHARGE',
-  'SCLERAL_REDNESS',
-  'CORNEAL_HAZINESS',
+  { id: 'LEUKOCORIA', short: 'انعكاس حدقي أبيض / غير طبيعي', tone: 'urgent' },
+  { id: 'CORNEAL_HAZINESS', short: 'عتامة أو تندب القرنية', tone: 'urgent' },
+  { id: 'SCLERAL_REDNESS', short: 'احمرار ملتحمة حاد أو إفرازات قيحية', tone: 'warn' },
+  { id: 'ANISOCORIA', short: 'تفاوت واضح في حجم الحدقتين', tone: 'urgent' },
+  { id: 'EYE_MISALIGNMENT', short: 'انحراف أو حول ظاهر بالعين المجردة', tone: 'urgent' },
 ] as const;
 
 const ASTHENOPIA_SIGNS = [
@@ -268,6 +277,7 @@ const createFallbackAnalysis = (image: HTMLImageElement): OcularFrameAnalysis =>
     upperLid: null,
     pupilRadiusPx: null,
     offsetPx: null,
+    signedOffsetPx: null,
     hvidPx: null,
     hvidSource: 'standard',
     saturatedPupilRatio: 0,
@@ -300,6 +310,9 @@ const toEyeLandmarks = (
   const offsetPx = points.pupil && points.reflex
     ? Math.hypot(points.pupil.x - points.reflex.x, points.pupil.y - points.reflex.y)
     : null;
+  const signedOffsetPx = points.pupil && points.reflex
+    ? points.reflex.x - points.pupil.x
+    : null;
 
   return {
     ...base,
@@ -308,6 +321,7 @@ const toEyeLandmarks = (
     reflex: points.reflex,
     upperLid: points.eyelid,
     offsetPx,
+    signedOffsetPx,
   };
 };
 
@@ -333,6 +347,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   setExternalEyeOther,
   externalEyeScreened,
   setExternalEyeScreened,
+  onEyePhotoCaptured,
   onProceedToCDSS,
 }) => {
   const { notify } = useFeedback();
@@ -362,7 +377,10 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState('');
-  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
+  /** Rear camera by default: higher resolution and the correct view for examining a child. */
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('environment');
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
   const [userImage, setUserImage] = useState<HTMLImageElement | null>(null);
   const [isShutterActive, setIsShutterActive] = useState(false);
   const [stabilityState, setStabilityState] = useState<StabilityState>('idle');
@@ -373,7 +391,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const [autoMessage, setAutoMessage] = useState('');
   const [qualityState, setQualityState] = useState<QualityState>('idle');
   const [qualityMessage, setQualityMessage] = useState('');
-  const [bypassAuto, setBypassAuto] = useState(false);
 
   const [analysis, setAnalysis] = useState<OcularFrameAnalysis | null>(null);
   const [auditPoints, setAuditPoints] = useState<Record<EyeKey, AuditPointSet>>(emptyAuditPoints);
@@ -457,6 +474,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     cameraCapabilitiesRef.current = null;
     cameraLockedRef.current = false;
     setCameraLockLabel('');
+    setTorchOn(false);
+    setTorchSupported(false);
     setCameraActive(false);
     setCameraError('');
   }, [stopStabilityMonitor]);
@@ -511,37 +530,39 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     return { applied: true, mrdAvailable };
   }, [mrd1MM, mrd1Recorded, notify, setAIQualityFlag, setHirschbergMM, setHirschbergRecorded, setMrd1MM, setMrd1Recorded]);
 
+  /**
+   * Commits one analysed frame.
+   *
+   * The blur / glare checks are **soft advisories only**: the photo is always
+   * kept and the measurements are always committed so a classroom capture is
+   * never thrown away by an automatic score. The examiner can still refine the
+   * pupil / reflex markers with one tap on the overlay.
+   */
   const commitAnalysisResult = useCallback((
     result: OcularFrameAnalysis,
-    options: { skipQuality?: boolean; burstCount?: number } = {},
+    options: { manual?: boolean; burstCount?: number } = {},
   ): boolean => {
-    const skipQuality = options.skipQuality ?? false;
+    const manual = options.manual ?? false;
     const burstCount = options.burstCount ?? result.burstCount ?? 1;
     const nextPoints = pointsFromAnalysis(result);
     setAnalysis(result);
     setAuditPoints(nextPoints);
 
-    // Quality gate: both checks run before any value is accepted.
-    if (!skipQuality && (result.isBlurred || result.hasGlare)) {
-      const message = result.isBlurred ? QUALITY_MESSAGE_BLUR : QUALITY_MESSAGE_GLARE;
-      setQualityState(result.isBlurred ? 'blur' : 'glare');
-      setQualityMessage(message);
-      setAutoStatus('error');
-      setAutoMessage(message);
-      setHirschbergRecorded(false);
-      setMrd1Recorded(false);
-      setAIQualityFlag(0);
-      notify(message, 'error');
-      return false;
-    }
+    // Soft quality advisory — never a gate.
+    const advisory = result.isBlurred
+      ? QUALITY_MESSAGE_BLUR
+      : result.hasGlare
+        ? QUALITY_MESSAGE_GLARE
+        : '';
+    setQualityState(advisory ? (result.isBlurred ? 'blur' : 'glare') : 'clear');
+    setQualityMessage(advisory);
+    if (advisory) notify(advisory, 'info');
 
-    setQualityState('clear');
-    setQualityMessage('');
-    const outcome = applyMetricsFromAudit(nextPoints, result, skipQuality);
+    const outcome = applyMetricsFromAudit(nextPoints, result, manual);
 
     if (!outcome.applied) {
       setAutoStatus('error');
-      setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — اضغط على الصورة لتحديد النقاط يدوياً.');
+      setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — المس الصورة لتحديد النقاط يدوياً.');
       setHirschbergRecorded(false);
       setMrd1Recorded(false);
       setAIQualityFlag(0);
@@ -550,8 +571,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     }
 
     setAutoStatus('done');
-    setAutoMessage(skipQuality
-      ? '⚡ تم تخطي الفحص التلقائي — اضبط النقاط يدوياً عند الحاجة.'
+    setAutoMessage(manual
+      ? '⚡ تم اعتماد القياسات من التحديد اليدوي.'
       : burstCount > 1
         ? !outcome.mrdAvailable
           ? `✅ تم دمج ${burstCount} إطارات وحساب Hirschberg. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.`
@@ -578,7 +599,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
   const runAutoDetection = useCallback((
     image: HTMLImageElement | null = userImage,
-    skipQuality = false,
+    manual = false,
   ) => {
     if (!image) {
       notify('يرجى التقاط صورة أو اختيار صورة أولاً.', 'info');
@@ -590,7 +611,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
     try {
       const result = analyzeOcularFrame(image);
-      commitAnalysisResult(result, { skipQuality });
+      commitAnalysisResult(result, { manual });
     } catch (error) {
       const message = error instanceof Error
         ? error.message
@@ -614,29 +635,51 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     userImage,
   ]);
 
+  /**
+   * Produces the diagnostic-clarity JPEG (1024 px / q 0.85 => ~80–150 KB) and
+   * hands it to App.tsx, which stores it in IndexedDB keyed by the Child_ID and
+   * uploads it to Supabase Storage on the next sync. The blob never enters
+   * localStorage, so the offline record store stays small.
+   */
+  const emitCompressedPhoto = useCallback(async (source: HTMLCanvasElement | HTMLImageElement) => {
+    if (!onEyePhotoCaptured) return;
+    try {
+      const { compressImageToBlob, blobToDataUrl } = await import('../utils/imageCompress');
+      const blob = await compressImageToBlob(source, 1024, 0.85);
+      const dataUrl = await blobToDataUrl(blob);
+      onEyePhotoCaptured({ blob, dataUrl });
+    } catch (error) {
+      console.warn('Eye photo compression failed', error);
+    }
+  }, [onEyePhotoCaptured]);
+
   const processLoadedImage = useCallback((image: HTMLImageElement) => {
     setUserImage(image);
     setAnalysis(null);
     setAuditPoints(emptyAuditPoints());
     setQualityState('idle');
     setQualityMessage('');
-    setBypassAuto(false);
     setAutoStatus('scanning');
     setAutoMessage('جارٍ تحليل جودة الصورة والنقاط التشريحية...');
     setAIQualityFlag(0);
     setHirschbergRecorded(false);
     setMrd1Recorded(false);
     lidWarningShownRef.current = false;
+    void emitCompressedPhoto(image);
     window.setTimeout(() => runAutoDetection(image), 60);
-  }, [runAutoDetection, setAIQualityFlag, setHirschbergRecorded, setMrd1Recorded]);
+  }, [emitCompressedPhoto, runAutoDetection, setAIQualityFlag, setHirschbergRecorded, setMrd1Recorded]);
 
-  const configureCameraTrack = useCallback(async (stream: MediaStream) => {
+  const configureCameraTrack = useCallback(async (stream: MediaStream, facing: 'user' | 'environment') => {
     const track = stream.getVideoTracks()[0] ?? null;
     cameraTrackRef.current = track;
     cameraCapabilitiesRef.current = null;
     cameraLockedRef.current = false;
     setCameraLockLabel('');
-    if (!track) return;
+    setTorchOn(false);
+    if (!track) {
+      setTorchSupported(false);
+      return;
+    }
 
     let capabilities: ExtendedTrackCapabilities = {};
     try {
@@ -655,7 +698,30 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     if (Object.keys(continuous).length > 0) {
       await applyAdvancedTrackConstraints(track, continuous);
     }
+
+    // Torch / flash: only the rear camera exposes it, and it removes the corneal
+    // reflex washout that ruins the Hirschberg measurement in dim classrooms.
+    const supportsTorch = capabilities.torch === true;
+    setTorchSupported(supportsTorch);
+    if (supportsTorch && facing === 'environment') {
+      const applied = await applyAdvancedTrackConstraints(track, { torch: true });
+      setTorchOn(applied.includes('torch'));
+    }
   }, []);
+
+  /** One-tap torch toggle (rear camera only). */
+  const toggleTorch = useCallback(async () => {
+    const track = cameraTrackRef.current;
+    if (!track || track.readyState !== 'live') return;
+    const next = !torchOn;
+    const applied = await applyAdvancedTrackConstraints(track, { torch: next });
+    if (applied.includes('torch')) {
+      setTorchOn(next);
+    } else {
+      setTorchSupported(false);
+      setTorchOn(false);
+    }
+  }, [torchOn]);
 
   const setCameraLock = useCallback(async (locked: boolean): Promise<boolean> => {
     const track = cameraTrackRef.current;
@@ -857,7 +923,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       video.srcObject = stream;
       video.setAttribute('playsinline', 'true');
       await video.play();
-      await configureCameraTrack(stream);
+      await configureCameraTrack(stream, facing);
       setCameraActive(true);
       setCameraFacingMode(facing);
       startStabilityMonitor();
@@ -879,6 +945,12 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     } finally {
       setCameraStarting(false);
     }
+  };
+
+  /** One-tap switch between the rear and the front camera. */
+  const toggleCameraFacing = () => {
+    const next: 'user' | 'environment' = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    void startCamera(next);
   };
 
   /**
@@ -930,7 +1002,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
       stopCamera();
       if (userImage) hadRetakeRef.current = true;
-      setBypassAuto(false);
       setUserImage(preview);
       setAnalysis(merged);
       setAuditPoints(pointsFromAnalysis(merged));
@@ -943,6 +1014,9 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       setAutoStatus('scanning');
       setAutoMessage(`تم دمج ${frames.length} إطارات — جارٍ تطبيق بوابة الجودة...`);
       await waitFor(0);
+      // The photo is always captured with a single tap: compress the sharpest
+      // full-resolution frame straight away, before any quality advisory.
+      void emitCompressedPhoto(frames[sharpestIndex]);
       commitAnalysisResult(merged, { burstCount: frames.length });
     } catch (error) {
       const message = error instanceof Error
@@ -987,44 +1061,11 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setQualityMessage('');
     setAutoStatus('idle');
     setAutoMessage('');
-    setBypassAuto(false);
     hadRetakeRef.current = false;
     lidWarningShownRef.current = false;
     setAIQualityFlag(0);
     setHirschbergRecorded(false);
     setMrd1Recorded(false);
-  };
-
-  const handleBypassToggle = () => {
-    if (!userImage) {
-      notify('التقط صورة أولاً لتفعيل التحديد اليدوي.', 'info');
-      return;
-    }
-
-    const next = !bypassAuto;
-    setBypassAuto(next);
-
-    if (next) {
-      const source = analysis ?? createFallbackAnalysis(userImage);
-      if (!analysis) setAnalysis(source);
-      const outcome = applyMetricsFromAudit(auditPoints, source, true);
-      if (outcome.applied) {
-        setQualityState('clear');
-        setQualityMessage('');
-        setAutoStatus('done');
-        setAutoMessage(outcome.mrdAvailable
-          ? '⚡ تم تخطي الفحص التلقائي — المس الصورة لضبط نقاط الحدقة والانعكاس.'
-          : '⚡ تم تخطي الفحص التلقائي — تم حساب Hirschberg، وحدد نقطة «حد الجفن» لإكمال MRD₁.');
-      } else {
-        setAutoStatus('idle');
-        setAutoMessage('اختر نوع النقطة ثم المس الصورة لتحديدها يدوياً.');
-      }
-      notify('تم تفعيل التحديد اليدوي. المس الصورة لضبط نقاط الحدقة والانعكاس.', 'info');
-      return;
-    }
-
-    // Turning bypass off re-runs the objective quality gate.
-    if (userImage) runAutoDetection(userImage, false);
   };
 
   const handlePreviewPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1060,7 +1101,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     const outcome = applyMetricsFromAudit(nextPoints, source, true);
 
     if (outcome.applied) {
-      setBypassAuto(true);
       setQualityState('clear');
       setQualityMessage('');
       setAutoStatus('done');
@@ -1069,7 +1109,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
         ? `تم ضبط نقطة ${pointLabel} يدوياً — AI_Quality_Flag = 3.`
         : `تم ضبط نقطة ${pointLabel} يدوياً — AI_Quality_Flag = 3. حدد نقطة «حد الجفن» أو اضبط MRD₁ يدوياً.`);
     } else {
-      setBypassAuto(true);
       setQualityState('clear');
       setQualityMessage('');
       setAutoStatus('idle');
@@ -1107,7 +1146,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     notify('تم تسجيل الفحص الخارجي كطبيعي. تابع إلى تحليل النتائج.', 'success');
   };
 
-  const qualityBlocked = !bypassAuto && (qualityState === 'blur' || qualityState === 'glare');
   const hasSuspicion = hirschbergRecorded && mrd1Recorded && (hirschbergMM >= 1.0 || mrd1MM < 2.5);
   const alignmentState = !hirschbergRecorded || !mrd1Recorded ? 'idle' : hasSuspicion ? 'warn' : 'pass';
   const prismDiopters = convertHirschbergToPrism(hirschbergMM);
@@ -1224,6 +1262,31 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 </svg>
               </div>
               {isShutterActive && <div className="capture-shutter" />}
+              <div className="capture-viewfinder-controls">
+                <button
+                  type="button"
+                  className="capture-control-btn"
+                  onClick={toggleCameraFacing}
+                  disabled={cameraStarting || burstActive}
+                  aria-label="تبديل الكاميرا بين الخلفية والأمامية"
+                >
+                  <RefreshCw size={15} aria-hidden="true" />
+                  🔄 تبديل الكاميرا (خلفية / أمامية)
+                </button>
+                {torchSupported && (
+                  <button
+                    type="button"
+                    className={`capture-control-btn capture-control-btn--torch${torchOn ? ' is-active' : ''}`}
+                    onClick={() => void toggleTorch()}
+                    disabled={burstActive}
+                    aria-pressed={torchOn}
+                    aria-label="تشغيل أو إيقاف فلاش الكاميرا"
+                  >
+                    <Zap size={15} aria-hidden="true" />
+                    {torchOn ? 'الفلاش مُفعّل' : 'تشغيل الفلاش'}
+                  </button>
+                )}
+              </div>
               <span className="capture-guide-label">
                 ضع وجه الطفل داخل الدائرتين — ابتعد 40–60 سم
               </span>
@@ -1263,11 +1326,9 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               <svg className="precision-hud" viewBox={`0 0 ${ANALYSIS_WIDTH} ${ANALYSIS_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
                 {(['OD', 'OS'] as EyeKey[]).map(renderEyeAuditHud)}
               </svg>
-              {(bypassAuto || qualityBlocked) && (
-                <span className="precision-tap-hint" aria-hidden="true">
-                  المس الصورة لتعديل النقاط يدوياً
-                </span>
-              )}
+              <span className="precision-tap-hint" aria-hidden="true">
+                المس لتعديل الحدقة (أحمر) أو الانعكاس (سماوي)
+              </span>
             </div>
           ) : (
             <div className="capture-empty">
@@ -1329,6 +1390,17 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               رفع صورة
               <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
             </label>
+            {!cameraActive && (
+              <button
+                type="button"
+                className="m3-btn m3-btn--outline"
+                onClick={toggleCameraFacing}
+                disabled={cameraStarting}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+                🔄 تبديل الكاميرا (خلفية / أمامية)
+              </button>
+            )}
             {userImage && (
               <button type="button" className="m3-btn m3-btn--outline" onClick={resetImage}>
                 <RefreshCw size={16} aria-hidden="true" />
@@ -1338,22 +1410,12 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           </div>
         </div>
 
-        {qualityBlocked ? (
-          <div className="notice notice--warn quality-banner mt-3" role="alert">
+        {qualityMessage ? (
+          <div className="notice notice--warn quality-banner mt-3" role="status">
             <AlertCircle size={18} aria-hidden="true" />
             <div>
-              <strong>{qualityState === 'blur' ? 'فشل فحص الوضوح' : 'فشل فحص الوهج'}</strong>
+              <strong>تلميح جودة الصورة (غير معطّل)</strong>
               <p>{qualityMessage}</p>
-              <div className="quality-banner__actions">
-                <button type="button" className="m3-btn m3-btn--sm m3-btn--secondary" onClick={() => startCamera()}>
-                  <Camera size={14} aria-hidden="true" />
-                  إعادة التصوير
-                </button>
-                <button type="button" className="m3-btn m3-btn--sm m3-btn--outline" onClick={handleBypassToggle}>
-                  <Zap size={14} aria-hidden="true" />
-                  ⚡ تخطي الفحص التلقائي واستخدام التحديد اليدوي
-                </button>
-              </div>
             </div>
           </div>
         ) : autoStatus !== 'idle' ? (
@@ -1365,18 +1427,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
         {userImage && (
           <>
-            <button
-              type="button"
-              className={`m3-btn m3-btn--block mt-2 ${bypassAuto ? 'm3-btn--primary' : 'm3-btn--outline'}`}
-              onClick={handleBypassToggle}
-              aria-pressed={bypassAuto}
-            >
-              <Zap size={16} aria-hidden="true" />
-              {bypassAuto
-                ? 'التحديد اليدوي مفعّل — اضغط لإيقاف التخطي'
-                : '⚡ تخطي الفحص التلقائي واستخدام التحديد اليدوي'}
-            </button>
-
             <div className="audit-tools" role="group" aria-label="نوع النقطة المراد تعديلها على الصورة">
               <span className="audit-tools__label">نقطة التعديل:</span>
               <button
@@ -1407,15 +1457,6 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 حد الجفن
               </button>
             </div>
-
-            {analysis && (
-              <div className="precision-meta" aria-label="مؤشرات جودة الصورة">
-                <span>HVID {analysis.landmarks.OD.hvidSource === 'detected' ? 'مقاس' : 'قياسي 11.7 مم'}</span>
-                <span>mm/px {analysis.mmPerPx.toFixed(4)}</span>
-                <span>وضوح {analysis.sharpness.toFixed(4)}</span>
-                <span>وهج {(analysis.glareRatio * 100).toFixed(0)}%</span>
-              </div>
-            )}
           </>
         )}
 
@@ -1509,7 +1550,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           >
             <CheckCircle2 size={24} aria-hidden="true" />
             <span>
-              <strong>✓ الفحص الخارجي طبيعي</strong>
+              <strong>✅ العينان سليمتان ظاهرياً</strong>
               <small>لا احمرار، لا إفرازات ظاهرة، ولا انحراف ملحوظ.</small>
             </span>
           </button>
@@ -1528,7 +1569,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
           {externalEyeGateAbnormal && (
             <div className="external-gate-chips" role="group" aria-label="ملاحظات الفحص الخارجي">
-              {EYE_FINDINGS.filter((finding) => EXTERNAL_GATE_IDS.some((id) => id === finding.id)).map((finding) => {
+              {EYE_FINDINGS.map((finding) => {
                 const selected = externalEyeFindings.includes(finding.id);
                 return (
                   <button
@@ -1600,7 +1641,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <summary>
             <span className="flex items-center gap-2">
               <Sliders size={16} aria-hidden="true" />
-              ضبط القيم والتحقق اليدوي
+              تعديل يدوي متقدم
             </span>
             <span className="text-[10px] font-semibold text-slate-400">للمراجع فقط</span>
           </summary>
@@ -1656,7 +1697,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <button
                 type="button"
-                onClick={() => runAutoDetection(userImage, bypassAuto)}
+                onClick={() => runAutoDetection(userImage, false)}
                 disabled={!userImage}
                 className="m3-btn m3-btn--secondary m3-btn--sm"
               >

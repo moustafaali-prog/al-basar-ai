@@ -48,20 +48,27 @@ export const MRD1_LIMITS = { min: 0.5, max: 6 } as const;
 export const SATURATION_THRESHOLD = 245;
 
 /** Glare is confirmed when saturated pixels span more than this share of the pupil disc. */
-export const GLARE_SPAN_THRESHOLD = 0.3;
+export const GLARE_SPAN_THRESHOLD = 0.55;
 
-/** Minimum normalized Laplacian variance (0..1 luminance) for an acceptably sharp frame. */
-export const LAPLACIAN_VARIANCE_MIN = 0.0016;
+/**
+ * Minimum normalized Laplacian variance (0..1 luminance) for an acceptably sharp frame.
+ * Calibrated for real classroom mobile photography: the Laplacian is evaluated on the
+ * *unblurred* luminance map, so this threshold is far lower than a smoothed-frame value.
+ */
+export const LAPLACIAN_VARIANCE_MIN = 0.0005;
 
 /** Minimum normalized luminance standard deviation (flat / washed-out frame guard). */
 export const CONTRAST_STD_MIN = 0.01;
 
 /**
- * Canonical examiner-facing rejection copy.
+ * Canonical examiner-facing quality copy.
  * Kept in this module so the quality gate and the audit UI can never drift.
+ * These are **soft, non-blocking hints**: the photo is always kept and the
+ * measurements are always committed (WHO 2025 fieldwork must never stall on an
+ * automatic quality score).
  */
-export const QUALITY_MESSAGE_BLUR = '⚠️ الصورة غير واضحة أو مهتزة — يرجى إعادة التصوير بثبات.';
-export const QUALITY_MESSAGE_GLARE = '⚠️ يوجد انعكاس ضوئي (وهج) قوى يغطي الحدقة — غيّر زاوية التصوير.';
+export const QUALITY_MESSAGE_BLUR = '⚠️ تلميح: وضوح الصورة منخفض — يُفضَّل التقاط صورة جديدة، لكن القياس محفوظ.';
+export const QUALITY_MESSAGE_GLARE = '⚠️ تلميح: انعكاس ضوئي يغطي الحدقة — يُفضَّل تغيير زاوية الإضاءة، لكن القياس محفوظ.';
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -97,8 +104,14 @@ export interface EyeLandmarks {
   /** Detected upper eyelid margin used for MRD₁ (analysis-frame pixels). */
   upperLid: ImagePoint | null;
   pupilRadiusPx: number | null;
-  /** Raw pupil-to-reflex distance in pixels. */
+  /** Raw pupil-to-reflex distance in pixels (Euclidean, kept for display). */
   offsetPx: number | null;
+  /**
+   * Signed horizontal decentration in analysis pixels: `reflex.x - pupil.x`.
+   * Positive means the reflex sits to the RIGHT of the pupil centre in the image.
+   * The sign is what makes nasal-vs-temporal asymmetry clinically readable.
+   */
+  signedOffsetPx: number | null;
   /** HVID measured in pixels (null when the standard framing fallback is used). */
   hvidPx: number | null;
   hvidSource: 'detected' | 'standard';
@@ -617,6 +630,7 @@ const detectEyeLandmarks = (
   }
 
   const offsetPx = pupil && reflex ? distance(pupil, reflex) : null;
+  const signedOffsetPx = pupil && reflex ? reflex.x - pupil.x : null;
 
   return {
     eye,
@@ -625,6 +639,7 @@ const detectEyeLandmarks = (
     upperLid,
     pupilRadiusPx,
     offsetPx,
+    signedOffsetPx,
     hvidPx,
     hvidSource: hvidPx ? 'detected' : 'standard',
     saturatedPupilRatio,
@@ -636,7 +651,14 @@ const detectEyeLandmarks = (
  * Frame analysis
  * ------------------------------------------------------------------ */
 
-/** Draws the photo into the canonical analysis frame and returns the mapping used. */
+/**
+ * Draws the photo into the canonical analysis frame and returns the mapping used.
+ *
+ * The frame uses a "cover" fit: the photo is scaled until it fully covers the
+ * 600×300 analysis frame and the overflow is cropped around the centre. This keeps
+ * the eye band filled for both portrait and landscape framing instead of leaving
+ * tiny black letterbox bars that would destroy the sharpness and glare metrics.
+ */
 export const buildAnalysisFrame = (image: OcularFrameSource): {
   canvas: HTMLCanvasElement;
   transform: AnalysisTransform;
@@ -655,7 +677,7 @@ export const buildAnalysisFrame = (image: OcularFrameSource): {
   const imgHeight = (image instanceof HTMLImageElement
     ? image.naturalHeight || image.height
     : image.height) || ANALYSIS_HEIGHT;
-  const scale = Math.min(ANALYSIS_WIDTH / imgWidth, ANALYSIS_HEIGHT / imgHeight);
+  const scale = Math.max(ANALYSIS_WIDTH / imgWidth, ANALYSIS_HEIGHT / imgHeight);
   const drawWidth = imgWidth * scale;
   const drawHeight = imgHeight * scale;
   const offsetX = (ANALYSIS_WIDTH - drawWidth) / 2;
@@ -687,7 +709,10 @@ export const analyzeOcularFrame = (image: OcularFrameSource): OcularFrameAnalysi
   const raw = buildLuminanceMap(imageData.data, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
   const blurred = boxBlur(raw, ANALYSIS_WIDTH, ANALYSIS_HEIGHT, 2);
 
-  const sharpness = computeLaplacianVariance(blurred, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
+  // Sharpness is measured on the *unblurred* luminance map: the 5×5 box blur used
+  // for landmark detection destroys the high-frequency detail that actually encodes
+  // motion blur, so scoring the blurred map made every classroom photo look soft.
+  const sharpness = computeLaplacianVariance(raw, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
   const contrast = computeLuminanceStdDev(blurred, ANALYSIS_WIDTH, ANALYSIS_HEIGHT);
 
   const landmarks = {
@@ -787,6 +812,7 @@ export const mergeOcularAnalyses = (frames: OcularFrameAnalysis[]): OcularFrameA
     const pupilRadiusPx = numericMedian(eyeFrames
       .map((landmarks) => landmarks.pupilRadiusPx)
       .filter((value): value is number => value !== null));
+    const signedOffsetPx = pupil && reflex ? reflex.x - pupil.x : null;
 
     return {
       eye,
@@ -795,6 +821,7 @@ export const mergeOcularAnalyses = (frames: OcularFrameAnalysis[]): OcularFrameA
       upperLid,
       pupilRadiusPx,
       offsetPx: pupil && reflex ? distance(pupil, reflex) : null,
+      signedOffsetPx,
       hvidPx: hvidReference,
       hvidSource: hvidReference === null ? 'standard' : 'detected',
       saturatedPupilRatio: numericMedian(eyeFrames.map((landmarks) => landmarks.saturatedPupilRatio)) ?? 0,
@@ -830,28 +857,49 @@ export const analyzeOcularBurst = (frames: OcularFrameSource[]): OcularFrameAnal
 
 /**
  * Net inter-ocular reflex asymmetry.
- * Each eye's measured reflex decentration is corrected by the physiological
- * 0.5 mm angle-kappa offset before the two eyes are differenced.
+ *
+ * The measurement uses the **signed horizontal** decentration of the corneal reflex
+ * (`reflex.x - pupil.x`) rather than the unsigned pupil↔reflex distance. Two reasons:
+ *
+ * 1. A purely vertical displacement (hypertropia / hypotropia) must not inflate the
+ *    horizontal strabismus metric.
+ * 2. The sign separates nasal from temporal deviation. In a frontal (un-mirrored)
+ *    capture the patient's right eye (OD) sits on the image left, so its nasal
+ *    direction is +x, while OS sits on the image right with a nasal direction of −x.
+ *    Mirroring OS onto the same nasal-positive axis makes a nasal deviation in OD
+ *    and a temporal deviation in OS show up as a genuine 2× asymmetry instead of
+ *    cancelling out as two equal unsigned distances.
+ *
+ * The physiological 0.5 mm angle-kappa offset (the reflex rests slightly nasal of
+ * the pupil centre in a normal eye) is then removed from each eye.
  */
 export const computeNetHirschberg = (
   landmarks: Record<EyeKey, EyeLandmarks>,
   mmPerPx: number,
 ): NetHirschbergResult => {
-  const odPx = landmarks.OD.offsetPx;
-  const osPx = landmarks.OS.offsetPx;
-  const odOffsetMm = odPx === null ? null : odPx * mmPerPx;
-  const osOffsetMm = osPx === null ? null : osPx * mmPerPx;
+  const signedOdPx = landmarks.OD.signedOffsetPx
+    ?? (landmarks.OD.pupil && landmarks.OD.reflex
+      ? landmarks.OD.reflex.x - landmarks.OD.pupil.x
+      : null);
+  const signedOsPx = landmarks.OS.signedOffsetPx
+    ?? (landmarks.OS.pupil && landmarks.OS.reflex
+      ? landmarks.OS.reflex.x - landmarks.OS.pupil.x
+      : null);
 
-  const adjustedOd = odOffsetMm === null ? null : Math.max(0, odOffsetMm - ANGLE_KAPPA_ADJUSTMENT_MM);
-  const adjustedOs = osOffsetMm === null ? null : Math.max(0, osOffsetMm - ANGLE_KAPPA_ADJUSTMENT_MM);
+  // Nasal-positive axis (see the note above).
+  const odNasalMm = signedOdPx === null ? null : signedOdPx * mmPerPx;
+  const osNasalMm = signedOsPx === null ? null : -signedOsPx * mmPerPx;
+
+  const odDeviationMm = odNasalMm === null ? null : odNasalMm - ANGLE_KAPPA_ADJUSTMENT_MM;
+  const osDeviationMm = osNasalMm === null ? null : osNasalMm - ANGLE_KAPPA_ADJUSTMENT_MM;
 
   let asym: number | null = null;
-  if (adjustedOd !== null && adjustedOs !== null) {
-    asym = Math.abs(adjustedOd - adjustedOs);
-  } else if (adjustedOd !== null) {
-    asym = adjustedOd;
-  } else if (adjustedOs !== null) {
-    asym = adjustedOs;
+  if (odDeviationMm !== null && osDeviationMm !== null) {
+    asym = Math.abs(odDeviationMm - osDeviationMm);
+  } else if (odDeviationMm !== null) {
+    asym = Math.abs(odDeviationMm);
+  } else if (osDeviationMm !== null) {
+    asym = Math.abs(osDeviationMm);
   }
 
   const hirschbergAsymMm = asym === null ? 0 : asym;
@@ -859,8 +907,8 @@ export const computeNetHirschberg = (
   return {
     hirschbergAsymMm,
     prismDiopters: Math.round(hirschbergAsymMm * PRISM_DIOPTERS_PER_MM),
-    odOffsetMm,
-    osOffsetMm,
+    odOffsetMm: odNasalMm,
+    osOffsetMm: osNasalMm,
   };
 };
 
@@ -912,8 +960,8 @@ export const naturalToAnalysis = (point: ImagePoint, t: AnalysisTransform): Imag
 });
 
 /**
- * The preview stage renders the photo with `object-fit: contain`, so the
- * natural→screen mapping uses the same fit model as the analysis frame.
+ * The preview stage renders the photo with `object-fit: cover`, exactly like the
+ * analysis frame, so the natural→screen mapping uses the same cover fit model.
  */
 export const naturalToScreen = (
   point: ImagePoint,
@@ -921,7 +969,7 @@ export const naturalToScreen = (
   boxWidth: number,
   boxHeight: number,
 ): ImagePoint => {
-  const scale = Math.min(boxWidth / t.imgWidth, boxHeight / t.imgHeight);
+  const scale = Math.max(boxWidth / t.imgWidth, boxHeight / t.imgHeight);
   return {
     x: point.x * scale + (boxWidth - t.imgWidth * scale) / 2,
     y: point.y * scale + (boxHeight - t.imgHeight * scale) / 2,
@@ -935,7 +983,7 @@ export const screenToNatural = (
   boxWidth: number,
   boxHeight: number,
 ): ImagePoint => {
-  const scale = Math.min(boxWidth / t.imgWidth, boxHeight / t.imgHeight);
+  const scale = Math.max(boxWidth / t.imgWidth, boxHeight / t.imgHeight);
   return {
     x: (x - (boxWidth - t.imgWidth * scale) / 2) / scale,
     y: (y - (boxHeight - t.imgHeight * scale) / 2) / scale,

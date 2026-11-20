@@ -563,6 +563,54 @@ details.m3-details[open] > summary { border-bottom: 1px solid var(--m3-border); 
 .alignment-frame { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .alignment-frame svg { width: 88%; height: 70%; }
 .capture-shutter { position: absolute; inset: 0; background: #fff; z-index: 10; }
+
+/* One-tap camera controls inside the viewfinder (switch lens / torch). */
+.capture-viewfinder-controls {
+  position: absolute; z-index: 8; top: 12px; inset-inline-end: 12px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  max-width: calc(100% - 24px);
+}
+.capture-control-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 48px; min-width: 48px; padding: 8px 12px; border-radius: 999px;
+  border: 1px solid rgba(248, 250, 252, 0.28);
+  background: rgba(8, 20, 36, 0.84); color: #f8fafc;
+  font-size: 11.5px; font-weight: 800; line-height: 1.25;
+  backdrop-filter: blur(6px); cursor: pointer;
+}
+.capture-control-btn:hover:not(:disabled) { background: rgba(8, 20, 36, 0.94); border-color: rgba(248, 250, 252, 0.5); }
+.capture-control-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.capture-control-btn--torch.is-active {
+  background: rgba(250, 204, 21, 0.92); color: #422006; border-color: rgba(250, 204, 21, 0.9);
+}
+
+/* Non-blocking calibration advisory on the digital acuity station. */
+.acuity-calibration-badge {
+  display: flex; align-items: center; gap: 8px;
+  margin: 8px 12px 0; padding: 8px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.45); border-radius: 12px;
+  background: rgba(120, 53, 15, 0.55); color: #fde68a;
+  font-size: 11.5px; font-weight: 700; line-height: 1.45;
+}
+.acuity-calibration-badge svg { flex: 0 0 auto; }
+
+/* WHO 2025 child-refusal banner (Step 1). */
+.assent-warning { align-items: flex-start; }
+.assent-warning svg { flex: 0 0 auto; margin-top: 1px; }
+
+/* Captured eye photo shown on the Step 4 result card. */
+.result-photo {
+  margin: 0 0 12px; padding: 10px;
+  border: 1px solid var(--m3-border); border-radius: 16px; background: var(--m3-surface-2);
+}
+.result-photo img {
+  display: block; width: 100%; max-height: 220px; object-fit: cover;
+  border-radius: 12px; background: #0f172a;
+}
+.result-photo figcaption {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; color: var(--m3-muted); font-size: 11px; font-weight: 700;
+}
 .capture-hint {
   position: absolute; z-index: 5; bottom: 12px; left: 50%; transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 24px);
@@ -1565,7 +1613,8 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   height: 100% !important;
   min-height: 0 !important;
   max-height: none !important;
-  object-fit: contain !important;
+  /* "cover" matches the analysis frame so the HUD overlay stays aligned. */
+  object-fit: cover !important;
 }
 .precision-hud {
   position: absolute;
@@ -1638,28 +1687,6 @@ input[type="range"].m3-range::-webkit-slider-thumb {
 .quality-banner { align-items: flex-start; }
 .quality-banner strong { display: block; margin-bottom: 2px; }
 .quality-banner p { margin: 0; font-weight: 700; }
-.quality-banner__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-.quality-banner__actions .m3-btn { min-height: 40px; }
-.precision-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-.precision-meta span {
-  padding: 4px 9px;
-  border: 1px solid var(--m3-border);
-  border-radius: 999px;
-  background: var(--m3-surface-2);
-  color: var(--m3-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
 
 @media (max-width: 640px) {
   .m3-btn,
@@ -1671,7 +1698,7 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   .segmented__btn {
     min-height: 54px;
   }
-  .quality-banner__actions .m3-btn { min-height: 54px; }
+  .capture-control-btn { min-height: 54px; }
   .precision-frame { min-height: 160px; }
 }
 

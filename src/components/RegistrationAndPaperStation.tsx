@@ -136,7 +136,13 @@ const HEALTHY_PRE_SCREEN: WHOPreScreenDraft = {
   hearingAids: 'NO',
 };
 
-const isHealthyPreScreen = (value: WHOPreScreenDraft): boolean =>
+/**
+ * A pre-screen is "healthy" when every symptom/history flag is negative.
+ * The spectacles flag is a *history* flag, not a symptom: a child who wears
+ * distance glasses is still healthy, so the value is accepted when it agrees
+ * with the participant record (`wearsGlasses`).
+ */
+const isHealthyPreScreen = (value: WHOPreScreenDraft, wearsGlasses: number): boolean =>
   value.childAssent === 'YES' &&
   value.diabetes === 'NO' &&
   value.eyePainOrSevereItch === 'NO' &&
@@ -144,7 +150,10 @@ const isHealthyPreScreen = (value: WHOPreScreenDraft): boolean =>
   value.parentHearingConcern === 'NO' &&
   value.teacherVisionConcern === 'NO' &&
   value.learningConcern === 'NO' &&
-  value.spectacles === 'NONE' &&
+  (
+    value.spectacles === 'NONE' ||
+    (wearsGlasses === 1 && value.spectacles === 'DISTANCE')
+  ) &&
   value.hearingAids === 'NO';
 
 interface PaperAcuityGridProps {
@@ -271,6 +280,26 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
     }
   };
 
+  /**
+   * Tapping any Snellen chip starts the paper station automatically.
+   *
+   * The examiner must never be blocked by a forgotten "Start" button: the tap on
+   * an acuity line IS the start of the paper measurement, so the timer is armed
+   * and `onPaperTestStarted()` is called to stamp `paperStartedAt`/`paperCompletedAt`
+   * in App.tsx. The duration is seeded with a small positive offset so the saved
+   * `Paper_Time_Sec` is always a valid (> 0) number even when the examiner taps
+   * Start manually a moment later.
+   */
+  const handlePaperAcuityChange = (eye: 'OD' | 'OS', value: string) => {
+    if (!timerRunning) {
+      setStartTime(performance.now() - Math.max(paperTimeSec, 0.3) * 1000);
+      setTimerRunning(true);
+      onPaperTestStarted();
+    }
+    if (eye === 'OD') setPaperOd(value);
+    else setPaperOs(value);
+  };
+
   const resetPaperTimer = () => {
     setTimerRunning(false);
     setPaperTimeSec(0);
@@ -280,15 +309,22 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
     setWHOPreScreen({ ...whoPreScreen, [key]: value });
   };
 
-  const healthyPreScreenApplied = parentalConsent === 1 && isHealthyPreScreen(whoPreScreen);
+  const healthyPreScreenApplied = parentalConsent === 1 && isHealthyPreScreen(whoPreScreen, wearsGlasses);
 
   /**
    * Speed path for a well child: one tap records consent, assent, and all
    * healthy WHO pre-screen answers. Every answer remains editable afterwards.
+   *
+   * The spectacles answer is derived from the participant's own record so the
+   * SPSS export can never contradict itself: a child recorded as wearing
+   * glasses is marked "DISTANCE" spectacles, never "NONE".
    */
   const applyHealthyPreScreen = () => {
     setParentalConsent(1);
-    setWHOPreScreen({ ...HEALTHY_PRE_SCREEN });
+    setWHOPreScreen({
+      ...HEALTHY_PRE_SCREEN,
+      spectacles: wearsGlasses === 1 ? 'DISTANCE' : 'NONE',
+    });
     setPreScreenOpen(false);
   };
 
@@ -528,6 +564,15 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
                 </span>
               </button>
 
+              {whoPreScreen.childAssent === 'NO' && (
+                <div className="notice notice--warn assent-warning mt-2" role="alert">
+                  <AlertCircle size={18} aria-hidden="true" />
+                  <span>
+                    ⚠️ رفض الطفل الفحص — لا يُجبر الطفل على الفحص (وثّق الحالة وفق بروتوكول WHO 2025).
+                  </span>
+                </div>
+              )}
+
               {healthyPreScreenApplied && (
                 <div className="notice notice--pass quick-pass-status" role="status">
                   <CheckCircle2 size={16} aria-hidden="true" />
@@ -618,18 +663,18 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
             <PaperAcuityGrid
               label="العين اليمنى · OD"
               value={paperOd}
-              onChange={setPaperOd}
-              disabled={!paperStationStarted}
+              onChange={(value) => handlePaperAcuityChange('OD', value)}
+              disabled={!stationReady}
             />
             <PaperAcuityGrid
               label="العين اليسرى · OS"
               value={paperOs}
-              onChange={setPaperOs}
-              disabled={!paperStationStarted}
+              onChange={(value) => handlePaperAcuityChange('OS', value)}
+              disabled={!stationReady}
             />
           </div>
           {!paperStationStarted && (
-            <p className="field-hint mt-2">ابدأ المؤقت أولاً لتفعيل شرائح حدة البصر.</p>
+            <p className="field-hint mt-2">المؤقت يبدأ تلقائياً عند أول اختيار لخط حدة البصر.</p>
           )}
           <p className="field-hint mt-2">
             حد الإحالة: 6/12 (LogMAR ≥ 0.30) — الرمز 88 يُحال وجوباً.

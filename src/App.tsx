@@ -212,6 +212,12 @@ export default function App() {
   const [externalEyeFindings, setExternalEyeFindings] = useState<string[]>([]);
   const [externalEyeOther, setExternalEyeOther] = useState('');
   const [externalEyeScreened, setExternalEyeScreened] = useState(false);
+  /**
+   * Compressed diagnostic-clarity photo of the current child's eyes.
+   * The binary blob is stored in IndexedDB (keyed by Child_ID) so the local
+   * record payload in localStorage never grows past a few kilobytes.
+   */
+  const [eyePhoto, setEyePhoto] = useState<{ blob: Blob; dataUrl: string } | null>(null);
 
   // Database state
   const [records, setRecords] = useState<StudentScreeningRecord[]>(() => {
@@ -388,21 +394,31 @@ export default function App() {
       let lastError = '';
 
       for (const rec of pending) {
-        // Photo handling: if local data URL exists, compress & upload then store public URL
-        if (rec.Eye_Photo_URL && rec.Eye_Photo_URL.startsWith('data:')) {
+        // Photo handling: the compressed JPEG is kept in IndexedDB (keyed by
+        // Child_ID) so localStorage never grows. It is uploaded to Supabase
+        // Storage here and the public URL is attached as `eye_photo_url`.
+        if (!rec.Eye_Photo_URL || rec.Eye_Photo_URL.startsWith('data:')) {
           try {
+            const { getEyePhoto } = await import('./utils/eyePhotoStore');
             const { compressImageToBlob, photoFileName } = await import('./utils/imageCompress');
             const { loadCloudAuthUser } = await import('./utils/supabaseAuth');
             const user = await loadCloudAuthUser();
             const userId = user?.id ?? 'anon';
-            const blob = await compressImageToBlob(rec.Eye_Photo_URL, 1024, 0.7);
-            const path = photoFileName(userId, rec.Child_ID);
-            const { error: upErr } = await client.storage.from('screening-photos').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
-            if (!upErr) {
-              const { data } = client.storage.from('screening-photos').getPublicUrl(path);
-              rec.Eye_Photo_URL = data.publicUrl;
-            } else {
-              console.warn('Photo upload failed', upErr);
+
+            let blob = await getEyePhoto(rec.Child_ID);
+            if (!blob && rec.Eye_Photo_URL?.startsWith('data:')) {
+              blob = await compressImageToBlob(rec.Eye_Photo_URL, 1024, 0.85);
+            }
+
+            if (blob) {
+              const path = photoFileName(userId, rec.Child_ID);
+              const { error: upErr } = await client.storage.from('screening-photos').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+              if (!upErr) {
+                const { data } = client.storage.from('screening-photos').getPublicUrl(path);
+                rec.Eye_Photo_URL = data.publicUrl;
+              } else {
+                console.warn('Photo upload failed', upErr);
+              }
             }
           } catch (e) {
             console.warn('Photo compress/upload skipped', e);
@@ -614,6 +630,7 @@ export default function App() {
     setExternalEyeFindings([]);
     setExternalEyeOther('');
     setExternalEyeScreened(false);
+    setEyePhoto(null);
   };
 
   // Typing (or QR-scanning) a BAB-xxx code re-assigns the counterbalanced
@@ -626,7 +643,7 @@ export default function App() {
     }
   };
 
-  const handleCommitRecord = () => {
+  const handleCommitRecord = async () => {
     if (parentalConsent !== 1) {
       notify('لا يمكن حفظ السجل قبل تأكيد الموافقة المطلوبة وفق بروتوكول الدراسة.', 'error');
       return;
@@ -678,7 +695,17 @@ export default function App() {
       smartOs,
       hirschbergMM,
       mrd1MM,
-      asthenopiaScore
+      asthenopiaScore,
+      {
+        paperOd,
+        paperOs,
+        externalEyeFindings,
+        whoPreScreen: {
+          diabetes: whoPreScreen.diabetes,
+          eyePainOrSevereItch: whoPreScreen.eyePainOrSevereItch,
+          childAssent: whoPreScreen.childAssent,
+        },
+      },
     );
 
     // WHO (2025) untestable-child rule: code 88 in any station forces the final referral flag.
@@ -767,6 +794,20 @@ export default function App() {
 
     const updated = [newRecord, ...records];
     if (!persistRecords(updated)) return;
+
+    // The eye photo lives in IndexedDB (keyed by Child_ID), never in localStorage.
+    if (eyePhoto) {
+      try {
+        const { saveEyePhoto } = await import('./utils/eyePhotoStore');
+        const stored = await saveEyePhoto(newRecord.Child_ID, eyePhoto.blob);
+        if (!stored) {
+          console.warn('Eye photo could not be stored in IndexedDB for', newRecord.Child_ID);
+        }
+      } catch (error) {
+        console.warn('Eye photo could not be stored in IndexedDB', error);
+      }
+    }
+
     setRecords(updated);
 
     notify(`حُفظ فحص التلميذ ${newRecord.Child_ID}. بدأ سجل تلميذ جديد.`, 'success');
@@ -1233,6 +1274,7 @@ export default function App() {
                   setExternalEyeOther={setExternalEyeOther}
                   externalEyeScreened={externalEyeScreened}
                   setExternalEyeScreened={setExternalEyeScreened}
+                  onEyePhotoCaptured={(photo) => setEyePhoto(photo)}
                   onProceedToCDSS={() => navigateToTab('cdss')}
                 />
               )}
@@ -1262,7 +1304,10 @@ export default function App() {
                   triageOcularFlag={triageOcularFlag}
                   asthenopiaScore={asthenopiaScore}
                   referralPHCC={referralPHCC}
-                  onCommitRecord={handleCommitRecord}
+                  externalEyeFindings={externalEyeFindings}
+                  whoPreScreen={whoPreScreen}
+                  eyePhotoDataUrl={eyePhoto?.dataUrl}
+                  onCommitRecord={() => { void handleCommitRecord(); }}
                   onProceedToDatabase={() => { setAdminPanel('database'); setAdminOpen(true); }}
                 />
               )}

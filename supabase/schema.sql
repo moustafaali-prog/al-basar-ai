@@ -260,4 +260,38 @@ create policy "albasar open update"
 -- Data API returns "permission denied for table" even when policies exist.
 grant select, insert, update on public.student_screening_records to anon, authenticated;
 
+-- =========================================================
+-- Ocular photo storage (public bucket for the compressed JPEG)
+-- =========================================================
+-- The examiner app compresses each ocular photo to 1024 px / q0.85 and stores
+-- it offline in IndexedDB. During cloud sync the blob is uploaded here and the
+-- resulting public URL is written to `eye_photo_url`.
+insert into storage.buckets (id, name, public)
+values ('screening-photos', 'screening-photos', true)
+on conflict (id) do update set public = excluded.public;
+
+drop policy if exists "albasar photo open read" on storage.objects;
+create policy "albasar photo open read"
+  on storage.objects
+  for select
+  to anon, authenticated
+  using (bucket_id = 'screening-photos');
+
+drop policy if exists "albasar photo open insert" on storage.objects;
+create policy "albasar photo open insert"
+  on storage.objects
+  for insert
+  to anon, authenticated
+  with check (bucket_id = 'screening-photos');
+
+drop policy if exists "albasar photo open update" on storage.objects;
+create policy "albasar photo open update"
+  on storage.objects
+  for update
+  to anon, authenticated
+  using (bucket_id = 'screening-photos')
+  with check (bucket_id = 'screening-photos');
+
+grant all on storage.objects to anon, authenticated;
+
 NOTIFY pgrst, 'reload schema';

@@ -26,6 +26,26 @@ export const REFERRAL_LOGMAR_CUTOFF = 0.30;
 export const UNTTESTABLE_LOGMAR = 88;
 export const UNTTESTABLE_ACUITY_LABEL = '88 (غير قابل للفحص - إحالة وجوبية)';
 
+/** Urgent (48 h) acuity threshold: 6/36 => LogMAR >= 0.80. */
+export const URGENT_LOGMAR_CUTOFF = 0.80;
+
+/** Inter-ocular difference threshold that triggers a standard referral. */
+export const IOD_LOGMAR_THRESHOLD = 0.20;
+
+/** Asthenopia symptom count that triggers a standard referral (WHO 2025). */
+export const ASTHENOPIA_REVIEW_THRESHOLD = 3;
+
+/** External-eye red flags that mandate an urgent (48 h) ophthalmology review. */
+export const URGENT_EXTERNAL_EYE_FLAGS = [
+  'LEUKOCORIA',
+  'CORNEAL_HAZINESS',
+  'ANISOCORIA',
+  'EYE_MISALIGNMENT',
+] as const;
+
+/** External-eye findings that mandate a standard (2-week PHCC) referral. */
+export const REVIEW_EXTERNAL_EYE_FLAGS = ['SCLERAL_REDNESS'] as const;
+
 export const LOGMAR_MAP: Record<string, number> = {
   // Censored result at the chart floor. 1.00 is a lower bound, not an exact acuity.
   'أقل من 6/60': 1.00,
@@ -121,16 +141,53 @@ export function getOptotypePixelSize(step: AcuityStep, pxPerMM: number, testingD
   return Math.max(9, Math.round(step.mm * distanceFactor * pxPerMM));
 }
 
+/** Normalizes a Snellen / WHO-88 label to its LogMAR value (undefined when unknown). */
+export function snellenToLogmar(label: string | undefined | null): number | undefined {
+  const value = label?.trim();
+  if (!value) return undefined;
+  if (value === '88' || value.startsWith('88 ')) return UNTTESTABLE_LOGMAR;
+  return LOGMAR_MAP[value] ?? (value === '6/9' ? 0.2 : undefined);
+}
+
+/** Extra WHO 2025 / AAPOS inputs that complete the triage verdict. */
+export interface ClinicalDecisionContext {
+  /** Paper-station (6 m) acuity for the right eye. */
+  paperOd?: string;
+  /** Paper-station (6 m) acuity for the left eye. */
+  paperOs?: string;
+  /** Step 3 external-eye red flags (WHO/AAPOS ids). */
+  externalEyeFindings?: string[];
+  /** WHO 2025 pre-screen answers (history flags, never diagnoses). */
+  whoPreScreen?: {
+    diabetes?: string;
+    eyePainOrSevereItch?: string;
+    childAssent?: string;
+  } | null;
+}
+
 /**
  * Apply the application's configured screening flags. These labels are not clinical
- * diagnoses, referral-time recommendations, or evidence of guideline conformity.
+ * diagnoses, but they encode the WHO 2025 / AAPOS referral tiers used by the study:
+ *
+ * - Urgent (`MODEL_PRIORITY`, 48 h ophthalmology referral): Hirschberg >= 1.0 mm,
+ *   MRD1 < 2.5 mm, acuity <= 6/36, WHO code 88 in either station, an external-eye
+ *   red flag (leukocoria / corneal haze / anisocoria / misalignment) or severe
+ *   eye pain or itch.
+ * - Standard (`MODEL_REVIEW`, 2-week PHCC referral): acuity <= 6/12, inter-ocular
+ *   difference >= 0.20 LogMAR, scleral redness, known diabetes, or >= 3 asthenopia
+ *   symptoms.
+ *
+ * `context` carries the paper-station acuity, the Step 3 external-eye findings and
+ * the WHO pre-screen answers so App.tsx (record commit) and the Step 4 CDSS panel
+ * always render the exact same verdict.
  */
 export function classifyClinicalDecision(
   odSnellen: string,
   osSnellen: string,
   hirschbergMM: number,
   mrd1MM: number,
-  asthenopiaScore: number
+  asthenopiaScore: number,
+  context: ClinicalDecisionContext = {},
 ): {
   urgency: 'MODEL_NO_FLAG' | 'MODEL_REVIEW' | 'MODEL_PRIORITY';
   categoryAr: string;
@@ -138,46 +195,69 @@ export function classifyClinicalDecision(
   detailsAr: string;
   referralCode: number;
 } {
-  const odLog = LOGMAR_MAP[odSnellen] ?? 0;
-  const osLog = LOGMAR_MAP[osSnellen] ?? 0;
-  const worstLog = Math.max(odLog, osLog);
-  const iod = Math.abs(odLog - osLog);
+  const odLog = snellenToLogmar(odSnellen) ?? 0;
+  const osLog = snellenToLogmar(osSnellen) ?? 0;
+  const paperOdLog = snellenToLogmar(context.paperOd) ?? 0;
+  const paperOsLog = snellenToLogmar(context.paperOs) ?? 0;
+
+  // The worse result across both stations drives the acuity tier.
+  const worstLog = Math.max(odLog, osLog, paperOdLog, paperOsLog);
+  const smartIod = Math.abs(odLog - osLog);
+  const paperIod = context.paperOd && context.paperOs
+    ? Math.abs(paperOdLog - paperOsLog)
+    : 0;
+  const iod = Math.max(smartIod, paperIod);
+
   const hasStrabismus = hirschbergMM >= 1.0;
   const hasPtosis = mrd1MM < 2.5;
 
-  // WHO (2025): a child recorded with the untestable code (88) in either eye is
-  // a mandatory referral, independent of the remaining model rules.
-  if (odLog === UNTTESTABLE_LOGMAR || osLog === UNTTESTABLE_LOGMAR) {
-    const eyesText = odLog === UNTTESTABLE_LOGMAR && osLog === UNTTESTABLE_LOGMAR
-      ? 'لكلا العينين'
-      : odLog === UNTTESTABLE_LOGMAR
-        ? 'للعين اليمنى'
-        : 'للعين اليسرى';
+  const findings = context.externalEyeFindings ?? [];
+  const urgentFlags = findings.filter((flag) =>
+    (URGENT_EXTERNAL_EYE_FLAGS as readonly string[]).includes(flag));
+  const reviewFlags = findings.filter((flag) =>
+    (REVIEW_EXTERNAL_EYE_FLAGS as readonly string[]).includes(flag));
+
+  const eyePain = context.whoPreScreen?.eyePainOrSevereItch === 'YES';
+  const diabetes = context.whoPreScreen?.diabetes === 'YES';
+
+  const untestable = [odSnellen, osSnellen, context.paperOd, context.paperOs]
+    .some((label) => snellenToLogmar(label) === UNTTESTABLE_LOGMAR);
+
+  const urgentReasons: string[] = [];
+  if (untestable) urgentReasons.push('رمز 88 (غير قابل للفحص الميداني) في إحدى المحطات');
+  if (hasStrabismus) urgentReasons.push('عدم تماثل انعكاس قرني ≥ 1.0 مم');
+  if (hasPtosis) urgentReasons.push('MRD₁ أقل من 2.5 مم');
+  // The WHO-88 sentinel (88 LogMAR) is not a real acuity value — never print it
+  // as a numeric LogMAR; the code-88 reason above already states the finding.
+  if (!untestable && worstLog >= URGENT_LOGMAR_CUTOFF) {
+    urgentReasons.push(`أسوأ حدة بصر ${worstLog.toFixed(2)} LogMAR (≤ 6/36)`);
+  }
+  if (urgentFlags.length > 0) urgentReasons.push(`علامات فحص خارجي: ${urgentFlags.join('، ')}`);
+  if (eyePain) urgentReasons.push('ألم أو حكة شديدة في العين');
+
+  if (urgentReasons.length > 0) {
     return {
       urgency: 'MODEL_PRIORITY',
-      categoryAr: 'غير قابل للفحص (رمز 88) - إحالة وجوبية وفق WHO 2025',
-      categoryEn: 'Untestable child (code 88) - mandatory referral',
-      detailsAr: `سُجّل رمز 88 (غير قابل للفحص) ${eyesText}. وفق دليل WHO 2025، الطفل غير القابل للفحص يُحال وجوباً إلى المركز الصحي، ويُستكمل تقييمه هناك.`,
+      categoryAr: 'إحالة عاجلة — مراجعة طبيب عيون خلال 48 ساعة',
+      categoryEn: 'Urgent referral - ophthalmology review within 48 hours',
+      detailsAr: `أسباب الإحالة العاجلة: ${urgentReasons.join('؛ ')}. وفق WHO 2025 / AAPOS يُحال الطفل إلى طبيب عيون خلال 48 ساعة.`,
       referralCode: 1,
     };
   }
 
-  if (hasStrabismus || hasPtosis || worstLog >= 0.80) {
-    return {
-      urgency: 'MODEL_PRIORITY',
-      categoryAr: 'إشارة أولوية أعلى وفق قواعد النموذج',
-      categoryEn: 'Higher-priority model flag',
-      detailsAr: `تجاوزت قيمة أو أكثر من القيم المدخلة حد النموذج (${hasStrabismus ? 'منعكس قرني ' : ''}${hasPtosis ? 'MRD₁ ' : ''}${worstLog >= 0.8 ? 'حدة البصر ' : ''}). راجع القياس والبروتوكول المحلي لتحديد الإجراء؛ لا يحدد هذا الناتج تشخيصاً أو موعد إحالة.`,
-      referralCode: 1,
-    };
-  }
+  const reviewReasons: string[] = [];
+  if (!untestable && worstLog >= REFERRAL_LOGMAR_CUTOFF) reviewReasons.push(`أسوأ حدة بصر ${worstLog.toFixed(2)} LogMAR (≤ 6/12)`);
+  if (iod >= IOD_LOGMAR_THRESHOLD) reviewReasons.push(`فرق العينين ${iod.toFixed(2)} LogMAR`);
+  if (reviewFlags.length > 0) reviewReasons.push(`علامات فحص خارجي: ${reviewFlags.join('، ')}`);
+  if (diabetes) reviewReasons.push('سكري معروف لدى الطفل');
+  if (asthenopiaScore >= ASTHENOPIA_REVIEW_THRESHOLD) reviewReasons.push(`أعراض إجهاد بصري (${asthenopiaScore}/5)`);
 
-  if (worstLog >= REFERRAL_LOGMAR_CUTOFF || iod >= 0.20 || asthenopiaScore >= 2) {
+  if (reviewReasons.length > 0) {
     return {
       urgency: 'MODEL_REVIEW',
-      categoryAr: 'نتيجة تستدعي مراجعة وفق بروتوكول الدراسة',
-      categoryEn: 'Model flag for protocol review',
-      detailsAr: `تجاوزت النتيجة أحد حدود الفرز المبرمجة (${iod >= 0.2 ? `فرق العينين ${iod.toFixed(2)} LogMAR` : worstLog >= REFERRAL_LOGMAR_CUTOFF ? `أسوأ عين ${worstLog.toFixed(2)} LogMAR عند حد 6/12` : 'قائمة الأعراض'}). حدة البصر وحدها لا تحدد نوع الخطأ الانكساري.`,
+      categoryAr: 'إحالة — مراجعة المركز الصحي خلال أسبوعين',
+      categoryEn: 'Standard referral - PHCC review within two weeks',
+      detailsAr: `أسسباب المراجعة: ${reviewReasons.join('؛ ')}. تُحال الحالة إلى مركز الصحة الأولية خلال أسبوعين وفق WHO 2025.`,
       referralCode: 1,
     };
   }

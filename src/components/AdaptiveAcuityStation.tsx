@@ -76,6 +76,10 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
   const { notify } = useFeedback();
   const [activeEye, setActiveEye] = useState<'OD' | 'OS' | 'COMPLETED'>(smartOd && smartOs ? 'COMPLETED' : 'OD');
   const [stepIndex, setStepIndex] = useState<number>(0);
+  /** Highest ladder line the child has passed (index into SNELLEN_LADDER). */
+  const [highestPassedIdx, setHighestPassedIdx] = useState<number | null>(null);
+  /** Lowest ladder line the child has failed (index into SNELLEN_LADDER). */
+  const [lowestFailedIdx, setLowestFailedIdx] = useState<number | null>(null);
   const [orientation, setOrientation] = useState<number>(0);
   const [targetLetter, setTargetLetter] = useState<string>('H');
   const [correctCount, setCorrectCount] = useState<number>(0);
@@ -103,10 +107,23 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     if (activeEye === 'COMPLETED' && clinicalFullscreen) setClinicalFullscreen(false);
   }, [activeEye, clinicalFullscreen]);
 
+  /**
+   * Picks the next optotype.
+   *
+   * The new letter / E orientation is **always strictly different** from the
+   * previous one so a young child sees a visible change on every single trial
+   * (a repeated target would let the child answer from memory instead of reading).
+   */
   const pickRandomTarget = useCallback(() => {
-    const angles = [0, 90, 180, 270];
-    setOrientation(angles[Math.floor(Math.random() * angles.length)]);
-    setTargetLetter(HOTV_LETTERS[Math.floor(Math.random() * HOTV_LETTERS.length)]);
+    setOrientation((current) => {
+      const angles = [0, 90, 180, 270];
+      const options = angles.filter((angle) => angle !== current);
+      return options[Math.floor(Math.random() * options.length)];
+    });
+    setTargetLetter((current) => {
+      const options = HOTV_LETTERS.filter((letter) => letter !== current);
+      return options[Math.floor(Math.random() * options.length)];
+    });
   }, []);
 
   const startEyeTest = (eye: 'OD' | 'OS', isAutomaticTransition = false) => {
@@ -118,6 +135,8 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     setStepIndex(0);
     setCorrectCount(0);
     setAttemptCount(0);
+    setHighestPassedIdx(null);
+    setLowestFailedIdx(null);
     setIsTrainingMode(false);
     pickRandomTarget();
     onSmartTestStarted(eye);
@@ -184,6 +203,21 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     }
   };
 
+  /**
+   * Adaptive staircase scoring (WHO 2025 / SPIRIT protocol).
+   *
+   * The previous implementation could oscillate forever between two adjacent
+   * lines whenever the child's true threshold lay between them (for example a
+   * child who passes 6/18 but fails 6/12: the old code walked 6/18 → 6/12 → 6/18
+   * → 6/12 without ever terminating).
+   *
+   * The fix tracks the bracket explicitly:
+   *  - `highestPassedIdx`: the best (smallest) line index the child has passed.
+   *  - `lowestFailedIdx`: the worst (largest) line index the child has failed.
+   *
+   * As soon as the two brackets touch, the threshold is known and the eye is
+   * concluded immediately with the best line actually passed.
+   */
   const scoreAnswer = (isCorrect: boolean) => {
     if (isTrainingMode) {
       pickRandomTarget();
@@ -194,37 +228,80 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     setAttemptCount(newAttempts);
     if (isCorrect) setCorrectCount(newCorrect);
 
+    const lastIndex = SNELLEN_LADDER.length - 1;
+
     if (isCorrect && newCorrect >= 2) {
-      let nextIdx = stepIndex;
-      if (stepIndex === 0) {
-        nextIdx = 4;
-      } else if (stepIndex === 4) {
-        nextIdx = 7;
-      } else if (stepIndex < SNELLEN_LADDER.length - 1) {
-        nextIdx = stepIndex + 1;
+      // ---------- The line was PASSED ----------
+      const nextHighestPassed = Math.max(highestPassedIdx ?? -1, stepIndex);
+      setHighestPassedIdx(nextHighestPassed);
+
+      if (stepIndex === lastIndex) {
+        // 6/6 reached - nothing better exists on the ladder.
+        setCorrectCount(0);
+        setAttemptCount(0);
+        concludeEye(SNELLEN_LADDER[stepIndex].snellen);
+        return;
       }
+
+      if (lowestFailedIdx !== null && stepIndex + 1 >= lowestFailedIdx) {
+        // The bracket closed: this line is the best one the child can read.
+        setCorrectCount(0);
+        setAttemptCount(0);
+        concludeEye(SNELLEN_LADDER[stepIndex].snellen);
+        return;
+      }
+
+      let nextIdx: number;
+      if (lowestFailedIdx === null) {
+        // Fast-track only while the ladder is still unknown.
+        if (stepIndex === 0) nextIdx = 4;
+        else if (stepIndex === 4) nextIdx = 7;
+        else nextIdx = Math.min(stepIndex + 1, lastIndex);
+      } else {
+        nextIdx = Math.min(stepIndex + 1, lastIndex);
+      }
+
       if (nextIdx !== stepIndex) {
         setStepIndex(nextIdx);
         setCorrectCount(0);
         setAttemptCount(0);
-        pickRandomTarget();
-      } else {
-        concludeEye(SNELLEN_LADDER[stepIndex].snellen);
       }
-    } else if (!isCorrect && newAttempts - newCorrect >= 2) {
+      pickRandomTarget();
+      return;
+    }
+
+    if (!isCorrect && newAttempts - newCorrect >= 2) {
+      // ---------- The line was FAILED ----------
+      const nextLowestFailed = Math.min(lowestFailedIdx ?? Number.MAX_SAFE_INTEGER, stepIndex);
+      setLowestFailedIdx(nextLowestFailed);
+
       if (stepIndex === 0) {
-        concludeEye('أقل من 6/60');
-      } else {
-        const newIdx = Math.max(0, stepIndex - 1);
-        setStepIndex(newIdx);
+        // The chart floor was failed twice.
         setCorrectCount(0);
         setAttemptCount(0);
-        pickRandomTarget();
+        concludeEye('أقل من 6/60');
+        return;
       }
-    } else {
-      if (!isCorrect) setCorrectCount(0);
+
+      if (highestPassedIdx !== null && stepIndex - 1 <= highestPassedIdx) {
+        // The bracket closed: the best passed line is the threshold.
+        setCorrectCount(0);
+        setAttemptCount(0);
+        concludeEye(SNELLEN_LADDER[highestPassedIdx].snellen);
+        return;
+      }
+
+      const nextIdx = stepIndex - 1;
+      setStepIndex(nextIdx);
+      setCorrectCount(0);
+      setAttemptCount(0);
       pickRandomTarget();
+      return;
     }
+
+    // The line is not yet decisive: keep testing on the same line.
+    if (!isCorrect) setCorrectCount(0);
+    pickRandomTarget();
   };
 
   const flashFeedback = (isCorrect: boolean) => {
@@ -285,7 +362,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeEye, isTrainingMode, timerActive, mode, orientation, targetLetter, attemptCount, correctCount, stepIndex, clinicalFullscreen]);
+  }, [activeEye, isTrainingMode, timerActive, mode, orientation, targetLetter, attemptCount, correctCount, stepIndex, highestPassedIdx, lowestFailedIdx, clinicalFullscreen]);
 
   const currentStep = SNELLEN_LADDER[stepIndex];
   const renderedSizePx = getOptotypePixelSize(currentStep, calibration.pxPerMM, calibration.testingDistanceMeters ?? 2.0);
@@ -371,6 +448,13 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
         </div>
       </header>
 
+      {/* Non-blocking calibration advisory (WHO 2025: optotype size needs a calibrated screen). */}
+      {!calibration.isCalibrated && (
+        <div className="acuity-calibration-badge" role="status" aria-live="polite">
+          <AlertTriangle size={13} aria-hidden="true" />
+          <span>⚠️ يُنصح بمعايرة شاشة هذا الهاتف من لوحة المشرف لدقة مقاس الحروف.</span>
+        </div>
+      )}
       {/* Setup / Completed */}
       {activeEye === 'COMPLETED' ? (
         <div className="flex-1 grid place-items-center text-center p-8">

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   AlertOctagon,
   AlertTriangle,
@@ -10,7 +10,12 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { classifyClinicalDecision, LOGMAR_MAP } from '../utils/acuityMath';
+import {
+  UNTTESTABLE_LOGMAR,
+  classifyClinicalDecision,
+  snellenToLogmar,
+} from '../utils/acuityMath';
+import { WHOPreScreenDraft } from '../types';
 
 interface CDSSProps {
   childId: string;
@@ -36,11 +41,24 @@ interface CDSSProps {
   triageOcularFlag: number;
   asthenopiaScore: number;
   referralPHCC: string;
+  /** WHO/AAPOS external-eye red flags recorded in Step 3. */
+  externalEyeFindings: string[];
+  /** WHO 2025 pre-screen answers recorded in Step 1. */
+  whoPreScreen: WHOPreScreenDraft;
+  /** Compressed diagnostic-clarity photo of the eyes (data URL), when captured. */
+  eyePhotoDataUrl?: string;
   onCommitRecord: () => void;
   onProceedToDatabase: () => void;
 }
 
 type VerdictTone = 'pass' | 'warn' | 'urgent' | 'pending';
+
+/** Canvas 2D exposes `direction` at runtime but the TS DOM lib does not declare it. */
+type RtlCanvasContext = CanvasRenderingContext2D & { direction: 'ltr' | 'rtl' | 'inherit' };
+
+const BLACKBOARD_WIDTH = 1200;
+const BLACKBOARD_HEIGHT = 480;
+const ARABIC_FONT = '"Cairo", "Noto Kufi Arabic", system-ui, -apple-system, "Segoe UI", sans-serif';
 
 const NURSING_INSTRUCTIONS: Record<VerdictTone, string[]> = {
   pass: [
@@ -55,7 +73,7 @@ const NURSING_INSTRUCTIONS: Record<VerdictTone, string[]> = {
     'سجّل موعد المراجعة في متابعة السجل.',
   ],
   urgent: [
-    'أبلغ ولي الأمر بضرورة مراجعة الطبيب خلال 48 ساعة.',
+    'أبلغ ولي الأمر بحاجة الطفل إلى مراجعة الطبيب خلال 48 ساعة.',
     'تأكد من وجود مرافق ووسيلة نقل مناسبة.',
     'سلّم بطاقة ولي الأمر ورقم المركز الصحي أو المستشفى.',
     'أبلغ مشرف الصحة المدرسية بالحالة قبل نهاية اليوم.',
@@ -89,11 +107,31 @@ const VERDICT_COPY: Record<VerdictTone, { title: string; subtitle: string; icon:
   },
 };
 
+/** Human-readable time-frame that is printed on the parent card. */
+const VERDICT_TIMEFRAME: Record<VerdictTone, string> = {
+  pass: 'فحص أولي سليم — لا توجد إحالة مطلوبة',
+  warn: 'مراجعة خلال أسبوعين',
+  urgent: 'إحالة عاجلة خلال 48 ساعة',
+  pending: 'النتيجة غير مكتملة بعد',
+};
+
 const resolveTone = (urgency: string): VerdictTone => {
   if (urgency === 'MODEL_NO_FLAG') return 'pass';
   if (urgency === 'MODEL_REVIEW') return 'warn';
   if (urgency === 'MODEL_PRIORITY') return 'urgent';
   return 'pending';
+};
+
+const formatArabicDate = (date: Date): string => {
+  try {
+    return new Intl.DateTimeFormat('ar-IQ', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
 };
 
 export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
@@ -118,18 +156,33 @@ export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
   triageOcularFlag,
   asthenopiaScore,
   referralPHCC,
+  externalEyeFindings,
+  whoPreScreen,
+  eyePhotoDataUrl,
   onCommitRecord,
   onProceedToDatabase,
 }) => {
   const blackboardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Fixed at mount so the printed examination date never changes mid-session. */
+  const examinationDate = useMemo(() => new Date(), []);
 
   const isSmartAcuityComplete = Boolean(smartOd.trim() && smartOs.trim());
   const activeOd = smartOd.trim() || 'غير مفحوص';
   const activeOs = smartOs.trim() || 'غير مفحوص';
 
   const isBiometryComplete = hirschbergRecorded && mrd1Recorded;
+
   const decision = isSmartAcuityComplete && isBiometryComplete
-    ? classifyClinicalDecision(smartOd, smartOs, hirschbergMM, mrd1MM, asthenopiaScore)
+    ? classifyClinicalDecision(smartOd, smartOs, hirschbergMM, mrd1MM, asthenopiaScore, {
+        paperOd,
+        paperOs,
+        externalEyeFindings,
+        whoPreScreen: {
+          diabetes: whoPreScreen.diabetes,
+          eyePainOrSevereItch: whoPreScreen.eyePainOrSevereItch,
+          childAssent: whoPreScreen.childAssent,
+        },
+      })
     : {
         urgency: 'PENDING' as const,
         categoryAr: !isSmartAcuityComplete ? 'بانتظار إكمال الفحص الرقمي للعينين' : 'بانتظار توثيق قياسات العين',
@@ -143,10 +196,22 @@ export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
   const verdict = VERDICT_COPY[tone];
   const VerdictIcon = verdict.icon;
 
-  const odLog = smartOd ? (LOGMAR_MAP[smartOd] ?? 0) : 0;
-  const osLog = smartOs ? (LOGMAR_MAP[smartOs] ?? 0) : 0;
-  const worstLog = isSmartAcuityComplete ? Math.max(odLog, osLog) : 0;
-  const worstSnellen = isSmartAcuityComplete ? (odLog >= osLog ? smartOd : smartOs) : 'بانتظار القياس';
+  const odLog = snellenToLogmar(smartOd) ?? 0;
+  const osLog = snellenToLogmar(smartOs) ?? 0;
+  const paperOdLog = snellenToLogmar(paperOd) ?? 0;
+  const paperOsLog = snellenToLogmar(paperOs) ?? 0;
+  const worstLog = isSmartAcuityComplete
+    ? Math.max(odLog, osLog, paperOdLog, paperOsLog)
+    : 0;
+  const untestable = [smartOd, smartOs, paperOd, paperOs]
+    .some((label) => snellenToLogmar(label) === UNTTESTABLE_LOGMAR);
+  const worstSnellen = untestable
+    ? 'غير قابل للقياس الميداني'
+    : isSmartAcuityComplete
+      ? (Math.max(odLog, osLog) >= Math.max(paperOdLog, paperOsLog)
+          ? (odLog >= osLog ? smartOd : smartOs)
+          : (paperOdLog >= paperOsLog ? paperOd : paperOs))
+      : 'بانتظار القياس';
 
   const drawBlackboard = useCallback(() => {
     const canvas = blackboardCanvasRef.current;
@@ -154,46 +219,85 @@ export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Arabic shaping / bidi on Android + iOS needs an explicit RTL canvas.
+    (ctx as RtlCanvasContext).direction = 'rtl';
+
     ctx.filter = 'none';
     ctx.fillStyle = '#14532d';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.strokeStyle = '#78350f';
-    ctx.lineWidth = 14;
-    ctx.strokeRect(7, 7, canvas.width - 14, canvas.height - 14);
+    ctx.lineWidth = 18;
+    ctx.strokeRect(9, 9, canvas.width - 18, canvas.height - 18);
 
-    const blurRadius = (worstLog * 12.0).toFixed(1);
-    ctx.filter = `blur(${blurRadius}px)`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'alphabetic';
 
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
+    // ---------------- "What the child sees" simulation ----------------
+    // The blur emulates the reduced acuity. Code 88 is NOT simulated with an
+    // extreme fog: an untestable child gets a clear, printable message.
+    if (untestable) {
+      ctx.fillStyle = '#fde68a';
+      ctx.font = `bold 34px ${ARABIC_FONT}`;
+      ctx.fillText('تلميذ غير قابل للقياس الميداني — يلزم تقييم أخصائي عيون', canvas.width - 70, 150);
+    } else {
+      const blurRadius = Math.min(30, Math.max(0, worstLog * 24)).toFixed(1);
+      ctx.filter = `blur(${blurRadius}px)`;
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold 30px ${ARABIC_FONT}`;
+      ctx.fillText('بسم الله الرحمن الرحيم', canvas.width - 70, 60);
+      ctx.font = `26px ${ARABIC_FONT}`;
+      ctx.fillText('درس الرياضيات:  ٣٥ + ١٥ = ٥٠', canvas.width - 70, 112);
+      ctx.font = `23px ${ARABIC_FONT}`;
+      ctx.fillText('قال المعلم: العلم نورٌ يضيء طريق المستقبل', canvas.width - 70, 162);
+      ctx.filter = 'none';
+    }
 
-    ctx.font = 'bold 24px system-ui';
-    ctx.fillText('بسم الله الرحمن الرحيم', canvas.width / 2, 48);
+    // ---------------- Crisp parent-card information ----------------
+    ctx.strokeStyle = 'rgba(248, 250, 252, 0.28)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(48, 208);
+    ctx.lineTo(canvas.width - 48, 208);
+    ctx.stroke();
 
-    ctx.font = 'bold 20px system-ui';
-    ctx.fillText('درس الرياضيات:  ٣٥ + ١٥ = ٥٠', canvas.width / 2, 92);
+    const right = canvas.width - 70;
+    const verdictColor = tone === 'urgent'
+      ? '#fecaca'
+      : tone === 'warn'
+        ? '#fde68a'
+        : tone === 'pass'
+          ? '#bbf7d0'
+          : '#e2e8f0';
 
-    ctx.font = '17px system-ui';
-    ctx.fillText('قال المعلم: العلم نورٌ يضيء طريق المستقبل', canvas.width / 2, 134);
-
-    ctx.filter = 'none';
     ctx.fillStyle = '#fef08a';
-    ctx.font = 'bold 13px system-ui';
-    ctx.fillText(
-      `بطاقة ولي الأمر | كود التلميذ: ${childId} | الرؤية المقاسة: ${worstSnellen}`,
-      canvas.width / 2,
-      176
-    );
+    ctx.font = `bold 27px ${ARABIC_FONT}`;
+    ctx.fillText(`بطاقة ولي الأمر · كود التلميذ: ${childId || 'BAB-###'}`, right, 252);
+
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = `22px ${ARABIC_FONT}`;
+    ctx.fillText(`المدرسة: ${schoolName || 'غير محددة'}`, right, 294);
+    ctx.fillText(`تاريخ الفحص: ${formatArabicDate(examinationDate)}`, right, 330);
+
+    ctx.fillStyle = verdictColor;
+    ctx.font = `bold 28px ${ARABIC_FONT}`;
+    ctx.fillText(`النتيجة: ${verdict.title} — ${VERDICT_TIMEFRAME[tone]}`, right, 378);
 
     ctx.fillStyle = '#bbf7d0';
-    ctx.font = '11px system-ui';
-    ctx.fillText(
-      `الجهة المسجلة للإحالة: ${referralPHCC || 'غير محددة'}`,
-      canvas.width / 2,
-      202
-    );
-  }, [worstLog, worstSnellen, childId, referralPHCC]);
+    ctx.font = `21px ${ARABIC_FONT}`;
+    ctx.fillText(`المركز الصحي للإحالة: ${referralPHCC || 'غير محددة'}`, right, 418);
+    ctx.fillText(`أسوأ حدة بصر مسجلة: ${worstSnellen}`, right, 452);
+  }, [
+    childId,
+    examinationDate,
+    referralPHCC,
+    schoolName,
+    tone,
+    untestable,
+    verdict.title,
+    worstLog,
+    worstSnellen,
+  ]);
 
   useEffect(() => {
     drawBlackboard();
@@ -266,6 +370,16 @@ export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
           </div>
         </div>
 
+        {eyePhotoDataUrl && (
+          <figure className="result-photo">
+            <img src={eyePhotoDataUrl} alt="صورة العينين الملتقطة أثناء الفحص" />
+            <figcaption>
+              <Sparkles size={13} aria-hidden="true" />
+              صورة العين الملتقطة — محفوظة محلياً وتُرفع للمركز الصحي عند المزامنة.
+            </figcaption>
+          </figure>
+        )}
+
         <div className="result-board">
           <div className="result-board__head">
             <span><Eye size={18} aria-hidden="true" /> بطاقة السبورة للأم</span>
@@ -274,8 +388,8 @@ export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
           <div className="blackboard-frame">
             <canvas
               ref={blackboardCanvasRef}
-              width={600}
-              height={220}
+              width={BLACKBOARD_WIDTH}
+              height={BLACKBOARD_HEIGHT}
               aria-label={`بطاقة السبورة للأم للتلميذ ${recordCode}`}
               role="img"
             />
