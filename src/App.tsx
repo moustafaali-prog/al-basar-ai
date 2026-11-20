@@ -238,6 +238,19 @@ export default function App() {
     };
   }, []);
 
+  // Auto-sync pending records when coming online and authenticated
+  useEffect(() => {
+    if (!isOnline) return;
+    if (!isSupabaseConfigured() || !cloudAuthReady) return;
+    if (!cloudUser) return;
+    const hasPending = records.some(r => r._syncStatus !== 'synced');
+    if (!hasPending) return;
+    const t = setTimeout(() => {
+      void syncLocalRecordsToCloud();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [isOnline, cloudUser?.id, cloudAuthReady]);
+
   // Initialise cloud auth lazily after first paint — it does not block the offline-first UI.
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -1009,6 +1022,18 @@ export default function App() {
         </div>
       </header>
 
+      {isSupabaseConfigured() && isOnline && !cloudUser && showCloudBanner && (
+        <div className="cloud-banner" dir="rtl">
+          <span>☁️ لمزامنة سجلات الفحص تلقائياً مع قاعدة بيانات المشرف، اضغط هنا لتسجيل الدخول أو تفعيل المزامنة السحابية (أو تابع العمل أوفلاين محلياً).</span>
+          <div className="cloud-banner__actions">
+            <button className="m3-btn m3-btn--primary m3-btn--sm" onClick={() => { setCloudLoginOpen(true); setShowCloudBanner(false); }}>
+              تسجيل الدخول
+            </button>
+            <button className="m3-btn m3-btn--ghost m3-btn--sm" onClick={() => setShowCloudBanner(false)}>إخفاء</button>
+          </div>
+        </div>
+      )}
+
       <div className="step-indicator">
         <div className="step-indicator__track">
           {CLINICAL_STEPS.map((step, idx) => (
@@ -1261,6 +1286,7 @@ export default function App() {
                   onUpdateRecord={handleUpdateRecord}
                   onImportRecords={handleImportRecords}
                   onClearRecords={handleClearRecords}
+                  onPullLatest={pullLatestFromCloud}
                 />
               )}
               {adminPanel === 'sus' && <NurseSUSScale />}

@@ -72,6 +72,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
   const [urlOverride, setUrlOverride] = useState(() => {
@@ -92,6 +93,8 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setInfoMessage('');
     setShowPassword(false);
     setSubmitting(false);
+    setTesting(false);
+    setTestResult(null);
     setPassword('');
     setTestResult(null);
     const timer = window.setTimeout(() => emailRef.current?.focus(), 60);

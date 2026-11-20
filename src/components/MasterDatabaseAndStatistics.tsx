@@ -28,6 +28,7 @@ interface DatabaseProps {
   onUpdateRecord: (updated: StudentScreeningRecord) => void;
   onImportRecords: (incoming: StudentScreeningRecord[]) => void;
   onClearRecords: () => void;
+  onPullLatest?: () => Promise<void>;
 }
 
 export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
@@ -35,6 +36,7 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
   onUpdateRecord,
   onImportRecords,
   onClearRecords,
+  onPullLatest,
 }) => {
   const { notify, confirmAction } = useFeedback();
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -243,6 +245,16 @@ export const MasterDatabaseAndStatistics: React.FC<DatabaseProps> = ({
               <Download className="w-3.5 h-3.5" />
               تصدير ملف CSV
             </button>
+
+            {onPullLatest && (
+              <button
+                onClick={onPullLatest}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition"
+              >
+                <Download className="w-3.5 h-3.5" />
+                سحب أحدث السجلات
+              </button>
+            )}
 
             <button
               onClick={onClearRecords}

@@ -39,7 +39,23 @@ export async function loadCloudAuthUser(): Promise<CloudAuthUser | null> {
   try {
     const { data, error } = await client.auth.getSession();
     if (error) return null;
-    return toCloudUser(data.session?.user);
+    const session = data.session;
+    if (!session?.user) return null;
+    
+    // Refresh if token expires within 5 minutes
+    const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+    const now = Date.now();
+    if (expiresAt && expiresAt - now < 5 * 60 * 1000) {
+      try {
+        const { data: refreshed } = await client.auth.refreshSession();
+        if (refreshed.session?.user) {
+          return toCloudUser(refreshed.session.user);
+        }
+      } catch {
+        // ignore refresh errors, fall back to existing session
+      }
+    }
+    return toCloudUser(session.user);
   } catch {
     return null;
   }
