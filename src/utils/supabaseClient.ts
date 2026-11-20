@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
+import type { StudentScreeningRecord } from '../types';
 import {
   isSupabaseConfigured,
   SUPABASE_ANON_KEY_VALUE,
@@ -8,7 +9,7 @@ import {
 
 /**
  * Supabase client for Al-Basar AI v3.
- * Returns null when env vars are missing or still placeholders, so the app
+ * Returns null when config is missing or still placeholders, so the app
  * remains 100% offline-first and the localStorage fallback is never disrupted.
  *
  * This module is dynamically imported only when the examiner taps the sync
@@ -22,8 +23,6 @@ export function getSupabaseClient(): SupabaseClient | null {
   try {
     _client = createClient(SUPABASE_URL_VALUE, SUPABASE_ANON_KEY_VALUE, {
       auth: {
-        // Persist the examiner session locally so the account survives
-        // offline reloads. Screening itself never requires a session.
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
@@ -37,4 +36,337 @@ export function getSupabaseClient(): SupabaseClient | null {
   }
 }
 
-export const supabase = getSupabaseClient();
+/**
+ * Ensure an active Supabase session is fresh; if refresh fails or no session
+ * exists, return false so callers can fall back to the public anon key.
+ */
+export async function ensureSessionValid(): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  try {
+    const { data: { session } } = await client.auth.getSession();
+    if (!session?.user) return false;
+    const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+    if (expiresAt && expiresAt - Date.now() < 5 * 60 * 1000) {
+      const { error } = await client.auth.refreshSession();
+      if (error) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns a valid JWT when an authenticated session exists, otherwise the
+ * public anon key. Field sync must never stop because the 1-hour JWT expired
+ * while the examiner was offline.
+ */
+export async function getBearerToken(): Promise<string> {
+  const client = getSupabaseClient();
+  if (!client) return SUPABASE_ANON_KEY_VALUE;
+
+  try {
+    const { data } = await client.auth.getSession();
+    const session = data.session;
+    if (!session?.access_token) return SUPABASE_ANON_KEY_VALUE;
+
+    const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+    if (expiresAt && expiresAt - Date.now() < 5 * 60 * 1000) {
+      try {
+        const { data: refreshed, error } = await client.auth.refreshSession();
+        if (!error && refreshed.session?.access_token) {
+          return refreshed.session.access_token;
+        }
+      } catch {
+        // fall through to anon key
+      }
+      return SUPABASE_ANON_KEY_VALUE;
+    }
+
+    return session.access_token;
+  } catch {
+    return SUPABASE_ANON_KEY_VALUE;
+  }
+}
+
+/** Convert undefined to null so PostgREST receives explicit SQL NULL values. */
+const n = <T>(value: T | undefined): T | null => (value === undefined ? null : value);
+
+/**
+ * Explicit 1:1 mapper between the local `StudentScreeningRecord` shape and the
+ * exact lowercase PostgreSQL columns declared in `supabase/schema.sql`.
+ * Local-only fields such as `_syncStatus` are intentionally omitted.
+ */
+export function mapRecordToSupabaseRow(record: StudentScreeningRecord): Record<string, unknown> {
+  return {
+    child_id: record.Child_ID,
+    examiner_id: record.Examiner_ID,
+    paper_examiner_id: n(record.Paper_Examiner_ID),
+    paper_started_at: n(record.Paper_Started_At),
+    paper_completed_at: n(record.Paper_Completed_At),
+    smart_examiner_id: n(record.Smart_Examiner_ID),
+    smart_started_at: n(record.Smart_Started_At),
+    smart_completed_at: n(record.Smart_Completed_At),
+    parental_consent: record.Parental_Consent,
+    child_assent: n(record.Child_Assent),
+    school_name: record.School_Name,
+    school_sector: record.School_Sector,
+    grade_level: record.Grade_Level,
+    age_years: record.Age_Years,
+    gender: record.Gender,
+    wears_glasses: record.Wears_Glasses,
+    who_pre_screen: n(record.WHO_PreScreen),
+    who_screening: n(record.WHO_Screening),
+    external_eye_findings: n(record.WHO_Screening?.externalEyeFindings),
+    who_referral_flag: n(record.WHO_Referral_Flag),
+    crossover_sequence: record.Crossover_Sequence,
+    paper_snellen_od: record.Paper_Snellen_OD,
+    paper_logmar_od: record.Paper_LogMAR_OD,
+    paper_snellen_os: record.Paper_Snellen_OS,
+    paper_logmar_os: record.Paper_LogMAR_OS,
+    paper_logmar_worse: n(record.Paper_LogMAR_Worse),
+    paper_time_sec: record.Paper_Time_Sec,
+    paper_referral: record.Paper_Referral,
+    smart_snellen_od: record.Smart_Snellen_OD,
+    smart_acuity_od_below_test_range: n(record.Smart_Acuity_OD_Below_Test_Range),
+    smart_logmar_od: record.Smart_LogMAR_OD,
+    smart_snellen_os: record.Smart_Snellen_OS,
+    smart_acuity_os_below_test_range: n(record.Smart_Acuity_OS_Below_Test_Range),
+    smart_logmar_os: record.Smart_LogMAR_OS,
+    smart_logmar_worse: n(record.Smart_LogMAR_Worse),
+    smart_iod_logmar: record.Smart_IOD_LogMAR,
+    smart_time_sec: record.Smart_Time_Sec,
+    hirschberg_asym_mm: record.Hirschberg_Asym_mm,
+    hirschberg_prism_diopters: record.Hirschberg_Prism_Diopters,
+    mrd1_min_mm: record.MRD1_Min_mm,
+    triage_ocular_flag: record.Triage_Ocular_Flag,
+    ai_quality_flag: n(record.AI_Quality_Flag),
+    asthenopia_score: record.Asthenopia_Score,
+    final_triage_referral: record.Final_Triage_Referral,
+    referral_urgency: record.Referral_Urgency,
+    referral_phcc: record.Referral_PHCC,
+    follow_up_status: record.FollowUp_Status,
+    spectacles_prescribed_fitted: n(record.Spectacles_Prescribed_Fitted),
+    gold_standard_confirmed: n(record.Gold_Standard_Confirmed),
+    gold_standard_method: n(record.Gold_Standard_Method),
+    gold_standard_examiner_id: n(record.Gold_Standard_Examiner_ID),
+    gold_standard_date: n(record.Gold_Standard_Date),
+    gold_standard_criteria: n(record.Gold_Standard_Criteria),
+    gold_standard_masked: n(record.Gold_Standard_Masked),
+    eye_photo_url: n(record.Eye_Photo_URL),
+    examination_date: record.Examination_Date,
+  };
+}
+
+export interface SupabaseDiagnostic {
+  ok: boolean;
+  status?: number;
+  code?: string;
+  message: string;
+  details?: string;
+  hint?: string;
+  droppedColumns?: string[];
+}
+
+interface PgErrorBody {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}
+
+function parsePgError(text: string): PgErrorBody {
+  try {
+    const parsed = JSON.parse(text) as PgErrorBody;
+    return {
+      code: parsed.code,
+      message: parsed.message ?? text,
+      details: parsed.details ?? undefined,
+      hint: parsed.hint ?? undefined,
+    };
+  } catch {
+    return { message: text };
+  }
+}
+
+function extractMissingColumn(message: string): string | null {
+  const patterns = [
+    /Could not find the '([^']+)' column/i,
+    /column\s+[a-zA-Z0-9_]+\.([a-zA-Z0-9_]+)\s+does not exist/i,
+    /column\s+"([^"]+)"\s+does not exist/i,
+  ];
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function formatError(status: number, body: PgErrorBody): string {
+  const code = body.code ? ` (${body.code})` : '';
+  const details = body.details ? ` — ${body.details}` : '';
+  const hint = body.hint ? ` — hint: ${body.hint}` : '';
+  return `HTTP ${status}${code}: ${body.message ?? 'Unknown Supabase error'}${details}${hint}`;
+}
+
+const TABLE = 'student_screening_records';
+
+/**
+ * Upsert one screening record through the PostgREST endpoint. The function
+ * surfaces the exact Supabase error text and, when PostgREST reports a stale
+ * schema cache for an optional column, removes that column and retries instead
+ * of silently swallowing the failure.
+ */
+export async function upsertScreeningRecord(
+  record: StudentScreeningRecord,
+): Promise<SupabaseDiagnostic> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured: missing project URL or anon key.');
+  }
+
+  const payload = mapRecordToSupabaseRow(record);
+  const droppedColumns: string[] = [];
+  const url = `${SUPABASE_URL_VALUE}/rest/v1/${TABLE}?on_conflict=child_id`;
+  let token = await getBearerToken();
+  let usedAnonFallback = token === SUPABASE_ANON_KEY_VALUE;
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_ANON_KEY_VALUE,
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (networkError) {
+      throw new Error(
+        `Network error while contacting Supabase: ${networkError instanceof Error ? networkError.message : String(networkError)}`,
+      );
+    }
+
+    if (response.ok) {
+      return { ok: true, status: response.status, message: 'Upsert succeeded.', droppedColumns };
+    }
+
+    const text = await response.text();
+    const body = parsePgError(text);
+
+    // A stale or revoked JWT may be rejected by PostgREST even though the
+    // project also allows anon access. Retry once with the public anon key.
+    if ((response.status === 401 || response.status === 403) && !usedAnonFallback) {
+      token = SUPABASE_ANON_KEY_VALUE;
+      usedAnonFallback = true;
+      continue;
+    }
+
+    const missingColumn = extractMissingColumn(body.message ?? '');
+    if (missingColumn && Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+      delete payload[missingColumn];
+      droppedColumns.push(missingColumn);
+      continue;
+    }
+
+    const error = new Error(formatError(response.status, body));
+    (error as Error & { status?: number; code?: string }).status = response.status;
+    (error as Error & { status?: number; code?: string }).code = body.code;
+    throw error;
+  }
+
+  throw new Error(
+    `HTTP 400: Too many schema mismatches while syncing. Dropped columns: ${droppedColumns.join(', ') || 'none'}`,
+  );
+}
+
+/** Lightweight GET diagnostic used by the connection tester. */
+export async function testSupabaseConnection(
+  overrideUrl?: string,
+  overrideKey?: string,
+): Promise<SupabaseDiagnostic> {
+  const baseUrl = (overrideUrl || SUPABASE_URL_VALUE).trim().replace(/\/+$/, '');
+  const anonKey = (overrideKey || SUPABASE_ANON_KEY_VALUE).trim();
+  if (!baseUrl || !anonKey) {
+    return { ok: false, message: 'Supabase URL or anon key is empty.' };
+  }
+  const url = `${baseUrl}/rest/v1/${TABLE}?select=child_id&limit=1`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+      },
+    });
+    const text = await response.text();
+    if (response.ok) {
+      return { ok: true, status: response.status, message: 'GET succeeded and the table is reachable.' };
+    }
+    const body = parsePgError(text);
+    return {
+      ok: false,
+      status: response.status,
+      code: body.code,
+      message: body.message ?? text,
+      details: body.details,
+      hint: body.hint,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Network error: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/** Live UPSERT diagnostic; inserts a clearly labelled DIAG row. */
+export async function testSupabaseUpsert(): Promise<SupabaseDiagnostic> {
+  const now = new Date().toISOString();
+  const testRecord: StudentScreeningRecord = {
+    Child_ID: 'DIAG-CONNECTION-TEST',
+    Examiner_ID: 'DIAGNOSTIC',
+    Parental_Consent: 1,
+    Examination_Date: now,
+    School_Name: 'DIAGNOSTIC',
+    School_Sector: 'DIAGNOSTIC',
+    Grade_Level: 1,
+    Age_Years: 7,
+    Gender: 'DIAGNOSTIC',
+    Wears_Glasses: 0,
+    Crossover_Sequence: 'DIAGNOSTIC',
+    Paper_Snellen_OD: '6/6',
+    Paper_LogMAR_OD: 0,
+    Paper_Snellen_OS: '6/6',
+    Paper_LogMAR_OS: 0,
+    Paper_Time_Sec: 1,
+    Paper_Referral: 0,
+    Smart_Snellen_OD: '6/6',
+    Smart_LogMAR_OD: 0,
+    Smart_Snellen_OS: '6/6',
+    Smart_LogMAR_OS: 0,
+    Smart_IOD_LogMAR: 0,
+    Smart_Time_Sec: 1,
+    Hirschberg_Asym_mm: 0,
+    Hirschberg_Prism_Diopters: 0,
+    MRD1_Min_mm: 0,
+    Triage_Ocular_Flag: 0,
+    Asthenopia_Score: 0,
+    Final_Triage_Referral: 0,
+    Referral_Urgency: 'ROUTINE',
+    Referral_PHCC: 'DIAGNOSTIC',
+    FollowUp_Status: 0,
+    _syncStatus: 'pending',
+  };
+
+  try {
+    return await upsertScreeningRecord(testRecord);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

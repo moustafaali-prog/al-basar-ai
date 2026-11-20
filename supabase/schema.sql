@@ -65,6 +65,7 @@ create table if not exists public.student_screening_records (
   gold_standard_criteria text,
   gold_standard_masked text,
   eye_photo_url text,
+  external_eye_findings jsonb,
   examination_date timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -100,6 +101,7 @@ alter table public.student_screening_records
   add column if not exists gold_standard_criteria text,
   add column if not exists gold_standard_masked text,
   add column if not exists eye_photo_url text,
+  add column if not exists external_eye_findings jsonb,
   add column if not exists owner_id uuid default auth.uid(),
   add column if not exists updated_at timestamptz not null default now();
 
@@ -192,7 +194,7 @@ grant select on public.examiner_profiles to authenticated;
 revoke all on public.examiner_profiles from anon;
 
 -- =========================================================
--- Row Level Security for screening records (authenticated only)
+-- Row Level Security for screening records (anon + authenticated)
 -- =========================================================
 alter table public.student_screening_records enable row level security;
 
@@ -203,31 +205,33 @@ drop policy if exists "albasar anon select" on public.student_screening_records;
 drop policy if exists "albasar examiner insert" on public.student_screening_records;
 drop policy if exists "albasar record read" on public.student_screening_records;
 drop policy if exists "albasar record update" on public.student_screening_records;
+drop policy if exists "albasar open insert" on public.student_screening_records;
+drop policy if exists "albasar open select" on public.student_screening_records;
+drop policy if exists "albasar open update" on public.student_screening_records;
 
--- An examiner may create a row only for themselves. owner_id defaults to
--- auth.uid(), so the app never needs to send it.
-create policy "albasar examiner insert"
+-- Deliberately permissive during the pilot so field examiners can sync before
+-- all accounts are provisioned. Tighten to owner_id = auth.uid() later.
+create policy "albasar open insert"
   on public.student_screening_records
   for insert
-  to authenticated
-  with check (owner_id = auth.uid());
+  to anon, authenticated
+  with check (true);
 
--- Examiners read/update their own rows; supervisors read/update every row.
-create policy "albasar record read"
+create policy "albasar open select"
   on public.student_screening_records
   for select
-  to authenticated
-  using (owner_id = auth.uid() or public.is_supervisor());
+  to anon, authenticated
+  using (true);
 
-create policy "albasar record update"
+create policy "albasar open update"
   on public.student_screening_records
   for update
-  to authenticated
-  using (owner_id = auth.uid() or public.is_supervisor())
-  with check (owner_id = auth.uid() or public.is_supervisor());
+  to anon, authenticated
+  using (true)
+  with check (true);
 
 -- Table privileges are separate from RLS policies. Without these GRANTs the
 -- Data API returns "permission denied for table" even when policies exist.
--- The public anon role is fully excluded from screening data.
-grant select, insert, update on public.student_screening_records to authenticated;
-revoke all on public.student_screening_records from anon;
+grant select, insert, update on public.student_screening_records to anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';

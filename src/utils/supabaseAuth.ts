@@ -69,6 +69,48 @@ export async function signInToCloud(email: string, password: string): Promise<Cl
   return user;
 }
 
+export interface CloudSignUpResult {
+  user: CloudAuthUser | null;
+  /** True when Supabase created the account but requires inbox confirmation. */
+  needsEmailConfirmation: boolean;
+  /** True when Supabase returned the anti-enumeration existing-user response. */
+  alreadyRegistered: boolean;
+}
+
+/**
+ * Create a new examiner account through Supabase Auth
+ * (`POST /auth/v1/signup`, invoked by the SDK).
+ *
+ * The project supervisor may disable public sign-ups in Supabase; in that case
+ * the returned error is translated by the modal into a clear Arabic message.
+ */
+export async function signUpToCloud(email: string, password: string): Promise<CloudSignUpResult> {
+  const client = await getClient();
+  if (!client) {
+    throw new CloudAuthError('Supabase is not configured.', 'CLOUD_NOT_CONFIGURED');
+  }
+
+  const { data, error } = await client.auth.signUp({
+    email: email.trim(),
+    password,
+  });
+
+  if (error) {
+    const code = (error as { code?: string }).code ?? 'SIGN_UP_FAILED';
+    throw new CloudAuthError(error.message, code);
+  }
+
+  const user = toCloudUser(data.user);
+  const identities = (data.user as { identities?: unknown[] } | null)?.identities;
+  const alreadyRegistered = Array.isArray(identities) && identities.length === 0;
+
+  return {
+    user,
+    needsEmailConfirmation: !data.session && Boolean(user),
+    alreadyRegistered,
+  };
+}
+
 /** Clear the local session; local screening records are never touched. */
 export async function signOutOfCloud(): Promise<void> {
   const client = await getClient();
