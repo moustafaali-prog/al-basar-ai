@@ -177,16 +177,27 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setBiometricEnabled(false);
   };
 
-  /** Persist the identity locally so the examiner is never blocked. */
+  /**
+   * Persist the identity locally so the examiner is never blocked.
+   *
+   * The role is **never** chosen here — it is either copied from the server
+   * JWT (`app_metadata.role`) or defaults to the least-privilege `examiner`.
+   */
   const persistLocalIdentity = (
     name: string,
     email: string,
     userId = '',
+    role: 'admin' | 'examiner' = 'examiner',
   ): CloudAuthUser => {
     const deviceId = getOrCreateDeviceId();
-    saveExaminerProfile({ fullName: name, email, deviceId, userId, rememberMe });
+    saveExaminerProfile({ fullName: name, email, deviceId, userId, rememberMe, role });
     if (email) registerLocalAccount({ fullName: name, email });
-    return { id: userId || `local-${deviceId}`, email: email || null, fullName: name || null };
+    return {
+      id: userId || `local-${deviceId}`,
+      email: email || null,
+      fullName: name || null,
+      role,
+    };
   };
 
   /**
@@ -237,8 +248,9 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
         id: binding?.userId || stored?.userId || `local-${getOrCreateDeviceId()}`,
         email: email || null,
         fullName: fullName || null,
+        role: stored?.role ?? 'examiner',
       };
-      persistLocalIdentity(fullName, user.email ?? '', user.id);
+      persistLocalIdentity(fullName, user.email ?? '', user.id, user.role);
       onSignedIn(user);
       // The biometric is already enrolled — no enrolment panel needed.
       onClose();
@@ -314,11 +326,16 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
         }
         // The account exists on the server; the local identity is persisted
         // immediately so a pending email confirmation never blocks fieldwork.
-        const localUser = persistLocalIdentity(trimmedName, trimmedIdentifier, result.user?.id ?? '');
+        const localUser = persistLocalIdentity(
+          trimmedName,
+          trimmedIdentifier,
+          result.user?.id ?? '',
+          result.user?.role ?? 'examiner',
+        );
         if (result.needsEmailConfirmation || !result.user) {
           setInfoMessage('✅ تم إنشاء الحساب. سيُفعّل المزامنة بعد تأكيد البريد الإلكتروني.');
-          setPostSignInUser({ ...localUser, id: result.user?.id ?? localUser.id });
-          onSignedIn({ ...localUser, id: result.user?.id ?? localUser.id });
+          setPostSignInUser(localUser);
+          onSignedIn(localUser);
           return;
         }
         const signedIn: CloudAuthUser = { ...result.user, fullName: result.user.fullName ?? trimmedName };
@@ -330,7 +347,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
       const user = await signInToCloud(resolvedEmail, password);
       setPassword('');
       const name = user.fullName?.trim() || localAccount?.fullName || trimmedName;
-      persistLocalIdentity(name, user.email ?? resolvedEmail, user.id);
+      persistLocalIdentity(name, user.email ?? resolvedEmail, user.id, user.role);
       const signedIn = { ...user, fullName: name || null };
       setPostSignInUser(signedIn);
       onSignedIn(signedIn);

@@ -3,10 +3,12 @@
 -- Idempotent: safe to re-run inside Supabase → SQL Editor.
 -- Local storage remains the primary source during offline screening.
 --
--- Field sync is intentionally passwordless-friendly: the public anon role
--- and authenticated examiners can SELECT/INSERT/UPDATE screening rows so a
--- school-day sync never stops because an examiner's 1-hour JWT expired.
--- Supervisor isolation is enforced in the app when accounts are available.
+-- Field sync requires a real, signed-in Supabase session.
+-- The `anon` role is no longer granted any privilege on the records table:
+-- RLS scopes every row to `owner_id = auth.uid()` (or a supervisor whose
+-- JWT carries `app_metadata.role = 'admin'`). A publishable key can never
+-- pull the children's dataset. Offline work stays in the device's local
+-- store until the examiner signs in.
 -- =========================================================
 
 create table if not exists public.student_screening_records (
@@ -131,7 +133,7 @@ alter table public.student_screening_records
   add column if not exists gold_standard_criteria text,
   add column if not exists gold_standard_masked text,
   add column if not exists eye_photo_url text,
-  add column if not exists external_eye_findings jsonb default '[]'::jsonb,
+  add column if not exists examination_date timestamptz,
   add column if not exists owner_id uuid default auth.uid(),
   add column if not exists updated_at timestamptz not null default now();
 
@@ -159,7 +161,7 @@ for each row execute function public.set_updated_at();
 -- =========================================================
 create table if not exists public.examiner_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
-  role text not null default 'examiner' check (role in ('examiner', 'supervisor')),
+  role text not null default 'examiner' check (role in ('examiner', 'supervisor', 'admin')),
   display_name text,
   examiner_code text,
   created_at timestamptz not null default now(),
@@ -169,6 +171,10 @@ create table if not exists public.examiner_profiles (
 alter table public.examiner_profiles enable row level security;
 
 -- Security-definer helper: avoids recursive RLS lookups on examiner_profiles.
+-- The role is accepted from EITHER source:
+--   * `app_metadata.role` in the JWT  — the authoritative, server-only source.
+--   * the mirrored `examiner_profiles.role` row — kept in sync by the trigger
+--     below so the table stays useful for reporting.
 create or replace function public.is_supervisor()
 returns boolean
 language sql
@@ -176,18 +182,21 @@ stable
 security definer
 set search_path = public
 as $$
-  select exists (
-    select 1
-    from public.examiner_profiles
-    where user_id = auth.uid()
-      and role = 'supervisor'
-  );
+  select
+    coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin', false)
+    or exists (
+      select 1
+      from public.examiner_profiles
+      where user_id = auth.uid()
+        and role in ('supervisor', 'admin')
+    );
 $$;
 
 revoke all on function public.is_supervisor() from public;
 grant execute on function public.is_supervisor() to authenticated;
 
 -- Every new Auth user receives an examiner profile automatically.
+-- The role is copied from `raw_app_meta_data`, which the user cannot modify.
 create or replace function public.handle_new_examiner()
 returns trigger
 language plpgsql
@@ -195,8 +204,12 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.examiner_profiles (user_id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', new.email))
+  insert into public.examiner_profiles (user_id, display_name, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'display_name', new.email),
+    case when new.raw_app_meta_data ->> 'role' = 'admin' then 'admin' else 'examiner' end
+  )
   on conflict (user_id) do nothing;
   return new;
 end;
@@ -220,11 +233,25 @@ grant select on public.examiner_profiles to authenticated;
 revoke all on public.examiner_profiles from anon;
 
 -- =========================================================
--- Row Level Security for screening records (anon + authenticated)
+-- Server-trusted RBAC helper
+-- =========================================================
+-- app_metadata lives in auth.users.raw_app_meta_data and is writable ONLY by
+-- the Supabase dashboard / a service_role key. `user_metadata` is writable by
+-- the user through auth.updateUser(), so it is never consulted for a role.
+create or replace function public.is_albasar_admin()
+returns boolean
+language sql
+stable
+as $$
+  select coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin', false);
+$$;
+
+-- =========================================================
+-- Row Level Security for screening records (owner-scoped)
 -- =========================================================
 alter table public.student_screening_records enable row level security;
 
--- Remove earlier pilot policies if this schema is re-run.
+-- Remove every earlier pilot policy if this schema is re-run.
 drop policy if exists "albasar anon insert" on public.student_screening_records;
 drop policy if exists "albasar anon update" on public.student_screening_records;
 drop policy if exists "albasar anon select" on public.student_screening_records;
@@ -234,63 +261,93 @@ drop policy if exists "albasar record update" on public.student_screening_record
 drop policy if exists "albasar open insert" on public.student_screening_records;
 drop policy if exists "albasar open select" on public.student_screening_records;
 drop policy if exists "albasar open update" on public.student_screening_records;
+drop policy if exists "allow_anon_all" on public.student_screening_records;
+drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
+drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
+drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
 
--- Deliberately permissive during the pilot so field examiners can sync before
--- all accounts are provisioned. Tighten to owner_id = auth.uid() later.
-create policy "albasar open insert"
-  on public.student_screening_records
-  for insert
-  to anon, authenticated
-  with check (true);
-
-create policy "albasar open select"
+-- An examiner reads/writes ONLY the rows they own (`owner_id = auth.uid()`).
+-- A supervisor (app_metadata.role = 'admin') reads and manages every row.
+-- There is no `anon` policy at all: an unauthenticated client is rejected by
+-- the database, so the publishable key can never pull the children's dataset.
+create policy "albasar_select_own_or_admin"
   on public.student_screening_records
   for select
-  to anon, authenticated
-  using (true);
+  to authenticated
+  using (owner_id = auth.uid() or public.is_albasar_admin());
 
-create policy "albasar open update"
+create policy "albasar_insert_own_or_admin"
+  on public.student_screening_records
+  for insert
+  to authenticated
+  with check (owner_id = auth.uid() or public.is_albasar_admin());
+
+create policy "albasar_update_own_or_admin"
   on public.student_screening_records
   for update
-  to anon, authenticated
-  using (true)
-  with check (true);
+  to authenticated
+  using (owner_id = auth.uid() or public.is_albasar_admin())
+  with check (owner_id = auth.uid() or public.is_albasar_admin());
+
+-- There is intentionally NO delete policy: RLS denies by default, so a
+-- synced research record can never be removed — not even by a supervisor.
+-- ALCOA+ / SPIRIT-AI audit trail is preserved.
 
 -- Table privileges are separate from RLS policies. Without these GRANTs the
 -- Data API returns "permission denied for table" even when policies exist.
-grant select, insert, update on public.student_screening_records to anon, authenticated;
+-- Only `authenticated` is granted here; `anon` is intentionally left out.
+grant select, insert, update on public.student_screening_records to authenticated;
+revoke select, insert, update, delete on public.student_screening_records from anon;
 
 -- =========================================================
--- Ocular photo storage (public bucket for the compressed JPEG)
+-- Ocular photo storage (PRIVATE bucket — IRB compliant)
 -- =========================================================
 -- The examiner app compresses each ocular photo to 1024 px / q0.85 and stores
--- it offline in IndexedDB. During cloud sync the blob is uploaded here and the
--- resulting public URL is written to `eye_photo_url`.
+-- it offline in IndexedDB. During cloud sync the blob is uploaded under the
+-- folder `{authUserId}/{childId}/{timestamp}.jpg`, and only that OBJECT PATH
+-- is written to `eye_photo_url`. The app resolves the path into a signed URL
+-- (1 hour) on demand through `createSignedUrl()`.
 insert into storage.buckets (id, name, public)
-values ('screening-photos', 'screening-photos', true)
-on conflict (id) do update set public = excluded.public;
+values ('screening-photos', 'screening-photos', false)
+on conflict (id) do update set public = false;
 
 drop policy if exists "albasar photo open read" on storage.objects;
-create policy "albasar photo open read"
+drop policy if exists "albasar photo open insert" on storage.objects;
+drop policy if exists "albasar photo open update" on storage.objects;
+drop policy if exists "albasar_photo_select_own_or_admin" on storage.objects;
+drop policy if exists "albasar_photo_insert_own_or_admin" on storage.objects;
+drop policy if exists "albasar_photo_update_own_or_admin" on storage.objects;
+
+create policy "albasar_photo_select_own_or_admin"
   on storage.objects
   for select
-  to anon, authenticated
-  using (bucket_id = 'screening-photos');
+  to authenticated
+  using (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  );
 
-drop policy if exists "albasar photo open insert" on storage.objects;
-create policy "albasar photo open insert"
+create policy "albasar_photo_insert_own_or_admin"
   on storage.objects
   for insert
-  to anon, authenticated
-  with check (bucket_id = 'screening-photos');
+  to authenticated
+  with check (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  );
 
-drop policy if exists "albasar photo open update" on storage.objects;
-create policy "albasar photo open update"
+create policy "albasar_photo_update_own_or_admin"
   on storage.objects
   for update
-  to anon, authenticated
-  using (bucket_id = 'screening-photos')
-  with check (bucket_id = 'screening-photos');
+  to authenticated
+  using (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  )
+  with check (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  );
 
 -- ⚠️ لا تُنفّذ "grant all on storage.objects to anon, authenticated" هنا:
 --    - على Supabase Cloud، storage.objects مملوك لحساب postgres (storage.super_user)
@@ -298,20 +355,19 @@ create policy "albasar photo open update"
 --      (migration 0046)؛ فالسطر كان تكراراً بلا فائدة.
 --    - grant all يمنح DELETE غير مبرّر، ويجعل السكريبت يفشل بـ 42501
 --      "must be owner of table objects" في أي مشروع غيّر فيه storage.super_user.
---    - الوصول للصور يُدار بالكامل عبر سياسات RLS أعلاه.
 --
--- 📋 أخلاقيات البحث (IRB): الحاوية عامة (public = true) لأن التطبيق يبني رابط
---    الصورة مباشرة عبر getPublicUrl دون توقيع روابط برمجياً. الصور مُرمّزة
---    بـ Child_ID فقط ولا تحتوي أسماء التلاميذ. فور انتهاء جمع البيانات يجب
---    تحويل الحاوية إلى private (public = false) وحصر القراءة بحساب المشرف فقط.
+-- 📋 أخلاقيات البحث (IRB): الحاوية خاصة (public = false). صور عيون الأطفال
+--    بيانات بيومترية حساسة؛ لا تُقرأ إلا برابط موقّع صالح ساعة واحدة، ولا
+--    يرفعها الفاحص إلا داخل مجلده {auth.uid()}/…، ولا يطّلع عليها المشرف
+--    إلا عبر نفس الواجهة.
 
--- لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً، فالحذف ممنوع عن
--- anon/authenticated حتى لو منحهم Supabase صلاحية الجدول على مستوى المنصة.
+-- لا توجد سياسة DELETE على storage.objects إطلاقاً.
 
 -- صلاحيات جدول storage (اختيارية + لا تُفشل السكريبت): Supabase منح
 -- anon/authenticated صلاحيات SELECT/INSERT/UPDATE/DELETE أصلاً (migration 0046).
 -- هذا المقطع يضمن الـ SELECT/INSERT/UPDATE فقط إن اختلفت إعدادات المشروع،
--- ولا يقوّي DELETE أبداً.
+-- ولا يقوّي DELETE أبداً. حماية القراءة الفعلية تأتي من سياسات RLS أعلاه
+-- (لا توجد سياسة لـ anon).
 do $$
 begin
   grant select, insert, update on storage.objects to anon, authenticated;

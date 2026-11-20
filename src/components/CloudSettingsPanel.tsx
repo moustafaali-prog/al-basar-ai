@@ -25,8 +25,8 @@ interface CloudSettingsPanelProps {
 
 /**
  * Supervisor-only technical surface. The examiner-facing modal stays free of
- * Supabase plumbing; every configuration detail lives here, behind the
- * PIN-protected admin drawer.
+ * Supabase plumbing; every configuration detail lives here, inside the
+ * role-gated admin drawer.
  */
 export const CloudSettingsPanel: React.FC<CloudSettingsPanelProps> = ({
   isOnline,
@@ -78,7 +78,7 @@ export const CloudSettingsPanel: React.FC<CloudSettingsPanelProps> = ({
         <span>
           {cloudUser
             ? `متصل بـ Supabase — ${cloudUser.fullName || cloudUser.email || 'حساب فاحص'}`
-            : 'غير مسجل الدخول — المزامنة تعمل بمفتاح anon العام.'}
+            : 'غير مسجل الدخول — المزامنة تتطلب حساباً موثقاً، وتبقى السجلات محفوظة محلياً.'}
         </span>
       </div>
 

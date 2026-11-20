@@ -20,6 +20,35 @@ where table_schema = 'public' and table_name like '%screen%';
 
 ---
 
+## 🔐 النموذج الأمني (RLAC صارم — enforced by PostgreSQL)
+
+| الطبقة | كيف تعمل |
+|---|---|
+| **الدور** | `app_metadata.role` في JWT فقط. `user_metadata` قابل للتعديل من العميل فلا يُقرأ أبداً، ولا يوجد أي بريد مشرف مكتوب داخل الحزمة. |
+| **الفاحص** | يرى/يضيف/يحدث **سجلاته فقط** (`owner_id = auth.uid()`). |
+| **المشرف** | `app_metadata.role = 'admin'` → يرى ويدير كل السجلات. |
+| **`anon`** | **لا صلاحية إطلاقاً** على جدول السجلات (RLD + `REVOKE`) — المفتاح المنشور لا يفتح بيانات التلاميذ. |
+| **الحذف** | لا توجد سياسة `DELETE` إطلاقاً → RLS denies افتراضياً، فالسجل المُرفع لا يُحذف (ALCOA+ / SPIRIT-AI audit trail). |
+| **الصور** | حاوية **خاصة** `public = false`، لا تُقرأ إلا برابط موقّع صالح ساعة، ولا يرفعها الفاحص إلا داخل مجلده `{auth.uid()}/…`. |
+
+> ⚠️ **الأثر الميداني:** المزامنة السحابية تتطلب تسجيل دخول حقيقي. من يعمل بلا إنترنت
+> تُحفظ سجلاته محلياً في الجهاز وتبقى `pending` حتى يسجّل الدخول، فتُرفع عندها
+> مرتبطة بـ `owner_id` صحيح. لا يوجد أي «مسار احتياطي» عبر `anon`.
+
+### ترقية حساب إلى مشرف
+
+من **Supabase → Authentication → Users**، أو عبر SQL Editor:
+
+```sql
+update auth.users
+   set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
+ where email = 'YOUR_ADMIN_EMAIL';
+```
+
+ثم **سجّل الخروج وأعد الدخول** مرة واحدة ليُصدر الخادم JWT جديداً يحمل `app_metadata.role`.
+
+---
+
 ## الخيار ١ (موصى به): ملف schema.sql كامل
 
 انسخ محتوى `schema.sql` كاملاً والصقه في **Supabase → SQL Editor → New Query** ثم اضغط **Run**.
@@ -27,17 +56,16 @@ where table_schema = 'public' and table_name like '%screen%';
 الملف **Idempotent**: يمكن تشغيله مرات متعددة بأمان، ولا يحذف أي بيانات قائمة.
 يشمل:
 - إنشاء الجدول بأعمدة الـ 35+ متغيّراً (SPSS) + الأعمدة الداخلية (61 عموداً).
-- ترقية آمنة للجداول القديمة عبر `add column if not exists` لكل عمود.
-- سياسات RLS للسماح بـ `anon` و `authenticated` على `SELECT` / `INSERT` / `UPDATE`.
-- `GRANT` على مستوى الجدول (بدونه يُرجع الـ Data API خطأ "permission denied").
-- حاوية `screening-photos` + 3 سياسات تخزين.
+- ترقية آمنة للجداول القديمة عبر `add column if not exists` لكل عمود (بما فيها `examination_date`).
+- سياسات RLS المقيّدة بـ `owner_id = auth.uid()` + دالة `public.is_albasar_admin()`.
+- حاوية `screening-photos` **خاصة** + 3 سياسات تخزين مقيّدة بمجلد صاحب الحساب.
 - `NOTIFY pgrst, 'reload schema';` في النهاية لتحديث ذاكرة PostgREST فوراً.
 
 ---
 
 ## الخيار ٢ (سريع): الأعمدة الناقصة + حاوية الصور
 
-نفّذ في SQL Editor محتوى **`supabase/quick-migration.sql`** كاملاً (5 أعمدة + الحاوية + السياسات).
+نفّذ في SQL Editor محتوى **`supabase/quick-migration.sql`** كاملاً (5 أعمدة + RLS + الحاوية + السياسات).
 
 ### ⚠️ لماذا لا يوجد `grant all on storage.objects to anon, authenticated`؟
 
@@ -69,24 +97,20 @@ where table_schema = 'public' and table_name like '%screen%';
 
 ### 📋 أخلاقيات البحث (IRB) — صور التلاميذ
 
-الحاوية `public = true` لأن التطبيق يبني رابط الصورة مباشرة عبر `getPublicUrl()`
-دون الحاجة لتوقيع روابط برمجياً. الصور مُرمّزة بـ `Child_ID` فقط ولا تحتوي أسماء التلاميذ.
-
-**عند انتهاء جمع البيانات**: اجعل الحاوية `private` واحصر القراءة بحساب المشرف:
-```sql
-update storage.buckets set public = false where id = 'screening-photos';
-```
+الحاوية `public = false`. التطبيق يرفع الصورة داخل `{auth.uid()}/{child_id}/{ts}.jpg`
+ويخزّن **مسار الكائن** فقط في `eye_photo_url`، ثم يقرأه عبر
+`createSignedUrl(path, 3600)` عند العرض. لا رابط عام ثابت، ولا اسم تلميذ في المسار.
 
 ---
 
 ## التحقق بعد التنفيذ
 
-### ١) الأعمدة (يجب أن يعيد 5 صفوف)
+### ١) الأعمدة (يجب أن يعيد 6 صفوف)
 ```sql
 select column_name, data_type, column_default
 from information_schema.columns
 where table_schema = 'public' and table_name = 'student_screening_records'
-  and column_name in ('external_eye_findings','eye_photo_url','owner_id','examiner_full_name','device_id')
+  and column_name in ('external_eye_findings','eye_photo_url','owner_id','examiner_full_name','device_id','examination_date')
 order by column_name;
 ```
 
@@ -99,20 +123,28 @@ from pg_policies
 where schemaname = 'storage' and tablename = 'objects'
 order by policyname;
 ```
+> `public` يجب أن يظهر `f` (خاصة) و `roles` يجب أن يظهر `{authenticated}`.
 
-### ٣) من التطبيق
-افتح **لوحة المشرف ← السحابة والمزامنة ← `[🔍 فحص الاتصال الآن]`** ← يجب أن يظهر
-`✅ HTTP 200`. جرّب «المتابعة والمزامنة السريعة بكود الفاحص فقط» وتأكد من
-اختفاء تنبيه تخطّي الحقول (`droppedColumns` يجب أن يصبح فارغاً).
+### ٣) أن `anon` لم يعد able على قراءة الجدول
+```sql
+-- يجب أن يعيد 0 (لا صفوف) لا خطأً:
+set role anon;
+select count(*) from public.student_screening_records;
+reset role;
+```
+
+### ٤) من التطبيق
+سجّل الدخول بحساب مشرف ← افتح **🧰/📊 ← لوحة البيانات ← «تحديث البيانات الحية»** ←
+يجب أن تظهر KPIStrip وعدد الفاحصين. جرّب «مزامنة» وتأكد أن `droppedColumns` يصبح فارغاً.
 
 ---
 
 ## ملاحظات
 
 - `owner_id` يُملأ تلقائياً بـ `auth.uid()` عند الإدراج من حساب مسجّل الدخول.
-  عند الإدراج بمفتاح `anon` يبقى `NULL` — وهذا مقصود لأن سياسات RLS مفتوحة
-  أثناء مرحلة التجربة.
 - لا يمكن تطبيق DDL من التطبيق: مفتاح `anon` لا يملك صلاحيات `ALTER TABLE`.
   التنفيذ اليدوي في SQL Editor هو الطريقة الوحيدة (أو مفتاح `service_role`).
 - الحاوية `screening-photos` لا يمكن إنشاؤها من الـ Storage API بمفتاح `anon`
   (إنشاء الحاويات يتطلب `service_role`) — لذلك تُنشأ من SQL Editor.
+- المعرّفات الآن بصيغة `BAB-<بادئة جهاز من 3 خانات>-<رقم>` (مثل `BAB-A4F-101`)
+  لمنع تصادم أكواد التلاميذ بين الفرق التي تعمل بلا إنترنت.

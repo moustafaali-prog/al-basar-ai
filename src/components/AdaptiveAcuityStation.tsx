@@ -17,6 +17,10 @@ interface AdaptiveAcuityProps {
   setSmartTimeSec: (sec: number) => void;
   smartExaminerId: string;
   setSmartExaminerId: (id: string) => void;
+  /** The examiner on duty at the smart (digital) station — used to prefill the id. */
+  examinerName?: string;
+  /** The second examiner (dual-examiner blinding) — one-tap swap at the station. */
+  alternateExaminerId?: string;
   smartExaminerLocked: boolean;
   onSmartTestStarted: (eye: 'OD' | 'OS') => void;
   onSmartTestCompleted: () => void;
@@ -66,6 +70,8 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
   setSmartTimeSec,
   smartExaminerId,
   setSmartExaminerId,
+  examinerName,
+  alternateExaminerId,
   smartExaminerLocked,
   onSmartTestStarted,
   onSmartTestCompleted,
@@ -161,11 +167,59 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     pickRandomTarget();
   }, [pickRandomTarget]);
 
+  /**
+   * SPIRIT/ALCOA+ — the stopwatch must only run while the child is actually
+   * being tested.
+   *
+   * The station therefore starts **idle**: the examiner positions the child
+   * at 2 m, covers the non-tested eye, and presses the start card. Only then
+   * does the OD optotype appear and `Smart_Time_Sec` begin counting.
+   */
+  const [awaitingStart, setAwaitingStart] = useState<boolean>(
+    () => !(smartOd && smartOs) && !smartExaminerLocked,
+  );
+
   useEffect(() => {
-    if (!smartOd && !timerActive && activeEye !== 'COMPLETED') {
-      startEyeTest('OD', false);
+    if (!smartOd && !timerActive && activeEye !== 'COMPLETED' && !smartExaminerLocked) {
+      // Re-arm the start card whenever the station is (re)entered idle.
+      setAwaitingStart(true);
     }
-  }, []);
+  }, [smartOd, timerActive, activeEye, smartExaminerLocked]);
+
+  /**
+   * Explicit examiner gate: arms the OD test and starts the stopwatch.
+   *
+   * The lock check happens **before** `awaitingStart` is cleared, so a locked
+   * station can never end up on a blank screen.
+   */
+  const beginStation = () => {
+    if (!awaitingStart) return;
+    if (smartExaminerLocked) {
+      notify('بدأت المحطة الرقمية بالفعل؛ لا يمكن إعادة تشغيلها دون إنشاء سجل جديد.', 'error');
+      return;
+    }
+    startEyeTest('OD', false);
+    setAwaitingStart(false);
+  };
+
+  /**
+   * Dual-examiner blinding — the smart station can be handed over to the
+   * second examiner with one tap, so the paper and digital stations are never
+   * run by the same person when the protocol requires it.
+   */
+  const swapToAlternateExaminer = () => {
+    if (!alternateExaminerId) return;
+    setSmartExaminerId(alternateExaminerId);
+    notify(`تم تحويل الفحص الرقمي إلى الفاحص: ${alternateExaminerId}`, 'info');
+  };
+
+  // Pre-fill the station examiner from the signed-in profile, without ever
+  // overwriting an explicit choice.
+  useEffect(() => {
+    if (smartExaminerId) return;
+    const fallback = (examinerName || '').trim();
+    if (fallback) setSmartExaminerId(fallback);
+  }, [examinerName, smartExaminerId, setSmartExaminerId]);
 
   const concludeEye = (thresholdSnellen: string) => {
     playEyeCompletedChime();
@@ -469,6 +523,52 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
             >
               الانتقال إلى فحص العين
             </button>
+          </div>
+        </div>
+      ) : awaitingStart ? (
+        /* -------- Examiner-gated start card (no timer runs yet) -------- */
+        <div className="acuity-start-gate flex-1 grid place-items-center p-6">
+          <div className="acuity-start-card">
+            <span className="acuity-start-card__icon" aria-hidden="true">
+              <Eye size={30} />
+            </span>
+            <h2 className="acuity-start-card__title">👁️ ابدأ فحص العين اليمنى OD</h2>
+            <ul className="acuity-start-card__list">
+              <li>تأكد أن الطفل جالس على بُعد <strong>2 متر</strong> من الشاشة.</li>
+              <li>غطِّ <strong>العين اليسرى</strong> بالكامل قبل البدء.</li>
+              <li>اضغط الزر عندها فقط ليبدأ المؤقت؛ المدة تُسجَّل في تحليل SPSS.</li>
+            </ul>
+            <button
+              type="button"
+              onClick={beginStation}
+              className="acuity-start-card__btn"
+            >
+              ابدأ الآن
+            </button>
+
+            <div className="acuity-start-card__examiner-row">
+              <label className="acuity-start-card__examiner-field">
+                <span>الفاحص في المحطة الرقمية</span>
+                <input
+                  type="text"
+                  value={smartExaminerId}
+                  onChange={(event) => setSmartExaminerId(event.target.value)}
+                  placeholder="اسم/كود الفاحص"
+                  disabled={smartExaminerLocked}
+                  autoComplete="off"
+                />
+              </label>
+              {alternateExaminerId && !smartExaminerLocked && (
+                <button
+                  type="button"
+                  onClick={swapToAlternateExaminer}
+                  className="acuity-start-card__swap"
+                  title="تعمية ثنائية: يسلم الفحص الرقمي إلى الفاحص الثاني"
+                >
+                  👥 تبديل مع الفاحص الثاني
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ) : (

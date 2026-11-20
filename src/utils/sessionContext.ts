@@ -11,6 +11,11 @@ export interface SchoolSessionContext {
   examinerId: string;
   paperExaminerId: string;
   smartExaminerId: string;
+  /**
+   * The second examiner on duty (dual-examiner blinding). When set, the
+   * paper and digital stations can be handed over with one tap.
+   */
+  alternateExaminerId: string;
   gradeLevel: number;
   updatedAt: string;
 }
@@ -22,6 +27,7 @@ export const EMPTY_SESSION_CONTEXT: SchoolSessionContext = {
   examinerId: '',
   paperExaminerId: '',
   smartExaminerId: '',
+  alternateExaminerId: '',
   gradeLevel: 0,
   updatedAt: '',
 };
@@ -41,6 +47,7 @@ export const readSessionContext = (): SchoolSessionContext => {
       examinerId: safeText(parsed.examinerId),
       paperExaminerId: safeText(parsed.paperExaminerId),
       smartExaminerId: safeText(parsed.smartExaminerId),
+      alternateExaminerId: safeText(parsed.alternateExaminerId),
       gradeLevel: Number.isInteger(grade) && grade >= 1 && grade <= 6 ? grade : 0,
       updatedAt: safeText(parsed.updatedAt),
     };

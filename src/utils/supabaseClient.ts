@@ -58,18 +58,24 @@ export async function ensureSessionValid(): Promise<boolean> {
 }
 
 /**
- * Returns a valid JWT when an authenticated session exists, otherwise the
- * public anon key. Field sync must never stop because the 1-hour JWT expired
- * while the examiner was offline.
+ * Returns a valid JWT for the signed-in examiner, or `null` when there is no
+ * session.
+ *
+ * ⚠️ The public anon key is deliberately **never** returned here. The cloud
+ * dataset is protected by `owner_id = auth.uid()` RLS policies, so an
+ * anonymous write would either be rejected by the database or — worse —
+ * require the very table-wide SELECT/UPDATE grants that expose every
+ * child's record. Offline work stays in the device's local store until the
+ * examiner signs in.
  */
-export async function getBearerToken(): Promise<string> {
+export async function getAuthAccessToken(): Promise<string | null> {
   const client = getSupabaseClient();
-  if (!client) return SUPABASE_ANON_KEY_VALUE;
+  if (!client) return null;
 
   try {
     const { data } = await client.auth.getSession();
     const session = data.session;
-    if (!session?.access_token) return SUPABASE_ANON_KEY_VALUE;
+    if (!session?.access_token) return null;
 
     const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
     if (expiresAt && expiresAt - Date.now() < 5 * 60 * 1000) {
@@ -79,15 +85,22 @@ export async function getBearerToken(): Promise<string> {
           return refreshed.session.access_token;
         }
       } catch {
-        // fall through to anon key
+        // fall through to the (possibly expired) cached token
       }
-      return SUPABASE_ANON_KEY_VALUE;
     }
 
     return session.access_token;
   } catch {
-    return SUPABASE_ANON_KEY_VALUE;
+    return null;
   }
+}
+
+/**
+ * Backwards-compatible alias. Kept as a named export so older call sites
+ * fail loudly rather than silently downgrading to the anon key.
+ */
+export async function getBearerToken(): Promise<string | null> {
+  return getAuthAccessToken();
 }
 
 /** Convert undefined to null so PostgREST receives explicit SQL NULL values. */
@@ -97,10 +110,18 @@ const n = <T>(value: T | undefined): T | null => (value === undefined ? null : v
  * Explicit 1:1 mapper between the local `StudentScreeningRecord` shape and the
  * exact lowercase PostgreSQL columns declared in `supabase/schema.sql`.
  * Local-only fields such as `_syncStatus` are intentionally omitted.
+ *
+ * @param ownerId The signed-in Supabase account id. It is written to the
+ *   `owner_id` column, which the RLS policies match against `auth.uid()` —
+ *   this is what keeps one examiner's rows invisible to another.
  */
-export function mapRecordToSupabaseRow(record: StudentScreeningRecord): Record<string, unknown> {
+export function mapRecordToSupabaseRow(
+  record: StudentScreeningRecord,
+  ownerId?: string | null,
+): Record<string, unknown> {
   return {
     child_id: record.Child_ID,
+    owner_id: ownerId ?? n(record.Owner_ID),
     examiner_id: record.Examiner_ID,
     examiner_full_name: n(record.Examiner_Full_Name),
     device_id: n(record.Device_ID),
@@ -182,6 +203,7 @@ export function mapSupabaseRowToRecord(row: Record<string, unknown>): StudentScr
     Examiner_ID: String(row.examiner_id ?? ''),
     Examiner_Full_Name: str(row.examiner_full_name),
     Device_ID: str(row.device_id),
+    Owner_ID: str(row.owner_id),
     _syncStatus: 'synced',
     Paper_Examiner_ID: str(row.paper_examiner_id),
     Paper_Started_At: str(row.paper_started_at),
@@ -246,12 +268,21 @@ export function mapSupabaseRowToRecord(row: Record<string, unknown>): StudentScr
 
 /**
  * Fetch every screening row the current role may read. Uses the Supabase
- * client so RLS decides visibility; falls back to the public anon key when no
- * examiner session exists.
+ * client so PostgreSQL RLS decides visibility:
+ *   * an examiner sees only the rows whose `owner_id` matches their `auth.uid()`
+ *   * an admin (`app_metadata.role = 'admin'`) sees every row
+ *
+ * There is no anon fallback: an unauthenticated call is rejected by the
+ * database rather than silently widening the blast radius.
  */
 export async function fetchScreeningRecords(): Promise<StudentScreeningRecord[]> {
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase client is not available.');
+
+  const token = await getAuthAccessToken();
+  if (!token) {
+    throw new Error('تسجيل الدخول مطلوب لقراءة السجلات السحابية.');
+  }
 
   const { data, error } = await client.from(TABLE).select('*');
   if (error) {
@@ -259,6 +290,38 @@ export async function fetchScreeningRecords(): Promise<StudentScreeningRecord[]>
   }
   const rows = (data ?? []) as Record<string, unknown>[];
   return rows.map(mapSupabaseRowToRecord);
+}
+
+/**
+ * Resolve a stored eye-photo path into a temporary, signed URL.
+ *
+ * The `screening-photos` bucket is **private** (IRB): the object path is the
+ * only thing persisted in `eye_photo_url`, and every view resolves it through
+ * a short-lived signed URL. `path` may also be a legacy public URL, in which
+ * case it is returned unchanged.
+ */
+export async function createSignedPhotoUrl(
+  path: string | undefined | null,
+  expiresInSeconds = 3600,
+): Promise<string | null> {
+  const value = (path ?? '').trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value; // legacy public URL
+
+  const client = getSupabaseClient();
+  if (!client) return null;
+  const token = await getAuthAccessToken();
+  if (!token) return null;
+
+  try {
+    const { data, error } = await client.storage
+      .from('screening-photos')
+      .createSignedUrl(value, expiresInSeconds);
+    if (error) return null;
+    return data?.signedUrl ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface SupabaseDiagnostic {
@@ -319,19 +382,31 @@ const TABLE = 'student_screening_records';
  * surfaces the exact Supabase error text and, when PostgREST reports a stale
  * schema cache for an optional column, removes that column and retries instead
  * of silently swallowing the failure.
+ *
+ * ⚠️ A real, signed-in session is **required**. The previous implementation
+ * silently downgraded to the public anon key on a 401/403, which combined
+ * with table-wide SELECT/UPDATE grants made the whole children's dataset
+ * readable by anyone holding the publishable key. Records created offline stay
+ * queued in the device's local store until the examiner signs in.
+ *
+ * @param ownerId The signed-in Supabase account id written to `owner_id`.
  */
 export async function upsertScreeningRecord(
   record: StudentScreeningRecord,
+  ownerId?: string | null,
 ): Promise<SupabaseDiagnostic> {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase is not configured: missing project URL or anon key.');
   }
 
-  const payload = mapRecordToSupabaseRow(record);
+  const token = await getAuthAccessToken();
+  if (!token) {
+    throw new Error('يلزم تسجيل الدخول قبل مزامنة السجلات — السجلات محفوظة محلياً بأمان.');
+  }
+
+  const payload = mapRecordToSupabaseRow(record, ownerId);
   const droppedColumns: string[] = [];
   const url = `${SUPABASE_URL_VALUE}/rest/v1/${TABLE}?on_conflict=child_id`;
-  let token = await getBearerToken();
-  let usedAnonFallback = token === SUPABASE_ANON_KEY_VALUE;
 
   for (let attempt = 0; attempt < 25; attempt += 1) {
     let response: Response;
@@ -367,12 +442,19 @@ export async function upsertScreeningRecord(
     const text = await response.text();
     const body = parsePgError(text);
 
-    // A stale or revoked JWT may be rejected by PostgREST even though the
-    // project also allows anon access. Retry once with the public anon key.
-    if ((response.status === 401 || response.status === 403) && !usedAnonFallback) {
-      token = SUPABASE_ANON_KEY_VALUE;
-      usedAnonFallback = true;
-      continue;
+    // A stale or revoked JWT is a hard stop: it is never retried with the
+    // public anon key, because that would defeat the `owner_id` policies.
+    if (response.status === 401 || response.status === 403) {
+      const error = new Error(
+        `HTTP ${response.status}${body.code ? ` (${body.code})` : ''}: ${
+          response.status === 401
+            ? 'انتهت صلاحية الجلسة. سجّل الدخول مجدداً ثم أعد المزامنة — السجلات محفوظة محلياً.'
+            : 'رفضت الخادم عملية الكتابة. تحقّق من سياسات RLS أو من صلاحية حسابك.'
+        }`,
+      );
+      (error as Error & { status?: number; code?: string }).status = response.status;
+      (error as Error & { status?: number; code?: string }).code = body.code;
+      throw error;
     }
 
     const missingColumn = extractMissingColumn(body.message ?? '');
@@ -393,7 +475,15 @@ export async function upsertScreeningRecord(
   );
 }
 
-/** Lightweight GET diagnostic used by the connection tester. */
+/**
+ * Lightweight GET diagnostic used by the connection tester.
+ *
+ * The probe runs with the signed-in JWT when a session exists. Without a
+ * session it deliberately uses the public anon key so the supervisor can still
+ * confirm that the project endpoint and the table are reachable — an anon
+ * `401` here is the **expected, healthy** state of a protected dataset, and
+ * is reported as "protected" rather than as a failure.
+ */
 export async function testSupabaseConnection(
   overrideUrl?: string,
   overrideKey?: string,
@@ -403,6 +493,9 @@ export async function testSupabaseConnection(
   if (!baseUrl || !anonKey) {
     return { ok: false, message: 'Supabase URL or anon key is empty.' };
   }
+
+  const sessionToken = overrideKey ? null : await getAuthAccessToken();
+  const token = sessionToken ?? anonKey;
   const url = `${baseUrl}/rest/v1/${TABLE}?select=child_id&limit=1`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -411,14 +504,31 @@ export async function testSupabaseConnection(
       signal: controller.signal,
       headers: {
         apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
+        Authorization: `Bearer ${token}`,
       },
     });
     const text = await response.text();
     if (response.ok) {
-      return { ok: true, status: response.status, message: 'GET succeeded and the table is reachable.' };
+      return {
+        ok: true,
+        status: response.status,
+        message: sessionToken
+          ? 'GET succeeded and the table is reachable.'
+          : 'GET succeeded (anonymous read allowed).',
+      };
     }
     const body = parsePgError(text);
+
+    // The dataset is owner-scoped: an anonymous read is rejected on purpose.
+    if (!sessionToken && (response.status === 401 || response.status === 403)) {
+      return {
+        ok: true,
+        status: response.status,
+        code: body.code,
+        message: '✅ الخادم متصل والجدول محمي بسياسات RLS (رفض القراءةAnon — الوضع الصحيح). سجّل الدخول لقراءة سجلاتك.',
+      };
+    }
+
     return {
       ok: false,
       status: response.status,
@@ -443,6 +553,8 @@ export async function testSupabaseConnection(
 /** Live UPSERT diagnostic; inserts a clearly labelled DIAG row. */
 export async function testSupabaseUpsert(): Promise<SupabaseDiagnostic> {
   const now = new Date().toISOString();
+  const client = getSupabaseClient();
+  const ownerId = client ? (await client.auth.getUser()).data.user?.id ?? null : null;
   const testRecord: StudentScreeningRecord = {
     Child_ID: 'DIAG-CONNECTION-TEST',
     Examiner_ID: 'DIAGNOSTIC',
@@ -480,7 +592,7 @@ export async function testSupabaseUpsert(): Promise<SupabaseDiagnostic> {
   };
 
   try {
-    return await upsertScreeningRecord(testRecord);
+    return await upsertScreeningRecord(testRecord, ownerId);
   } catch (error) {
     return {
       ok: false,

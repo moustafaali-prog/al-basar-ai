@@ -7,11 +7,35 @@ import { isSupabaseConfigured } from './supabaseConfig';
  * so the initial PWA bundle remains unchanged. These helpers only return
  * plain account objects to React and never block local, offline screening.
  */
+
+/**
+ * Server-trusted role.
+ *
+ * The role is read **exclusively** from `app_metadata`, which Supabase stores
+ * in `auth.users.raw_app_meta_data` and which a user can never change from the
+ * client (`auth.updateUser()` only writes `user_metadata`).
+ *
+ * Reading `user_metadata.role` would let any signed-up examiner promote
+ * themselves to admin with a single REST call, so it is never consulted.
+ */
+export type CloudRole = 'admin' | 'examiner';
+
 export interface CloudAuthUser {
   id: string;
   email: string | null;
   /** Full triple name supplied at sign-up (or restored from the profile). */
   fullName: string | null;
+  /**
+   * Server-trusted role. `admin` only when the JWT carries
+   * `app_metadata.role = 'admin'`, which is set server-side from the
+   * Supabase dashboard or the `service_role` key.
+   */
+  role: CloudRole;
+}
+
+/** True only for a role granted server-side in `raw_app_meta_data`. */
+export function isAdminUser(user: CloudAuthUser | null | undefined): boolean {
+  return user?.role === 'admin';
 }
 
 export class CloudAuthError extends Error {
@@ -32,17 +56,33 @@ const getClient = async () => {
   return getSupabaseClient();
 };
 
+/**
+ * Normalises a Supabase user into the app's account shape.
+ *
+ * `full_name` comes from `user_metadata` (the user may legitimately set their
+ * own display name), but the **role** comes from `app_metadata` only — never
+ * from `user_metadata`, which is client-writable.
+ */
 const toCloudUser = (
   user: {
     id: string;
     email?: string | null;
-    user_metadata?: { full_name?: string | null } | null;
+    user_metadata?: Record<string, unknown> | null;
+    app_metadata?: Record<string, unknown> | null;
   } | null | undefined,
-): CloudAuthUser | null => (user ? {
-  id: user.id,
-  email: user.email ?? null,
-  fullName: user.user_metadata?.full_name?.trim() || null,
-} : null);
+): CloudAuthUser | null => {
+  if (!user) return null;
+  const appMeta = user.app_metadata ?? {};
+  const userMeta = user.user_metadata ?? {};
+  const rawFullName = userMeta.full_name;
+  const rawRole = appMeta.role;
+  return {
+    id: user.id,
+    email: user.email ?? null,
+    fullName: typeof rawFullName === 'string' ? rawFullName.trim() || null : null,
+    role: typeof rawRole === 'string' && rawRole === 'admin' ? 'admin' : 'examiner',
+  };
+};
 
 /** Restore a persisted session without making a network request first. */
 export async function loadCloudAuthUser(): Promise<CloudAuthUser | null> {

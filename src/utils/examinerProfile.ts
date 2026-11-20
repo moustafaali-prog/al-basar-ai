@@ -25,6 +25,11 @@ export interface ExaminerProfile {
   userId: string;
   /** "Keep me signed in on this device" — drives silent session restore. */
   rememberMe: boolean;
+  /**
+   * Server-trusted role mirrored from the Supabase JWT `app_metadata`.
+   * The client never decides this — it only caches what the server granted.
+   */
+  role: 'admin' | 'examiner';
   savedAt: string;
 }
 
@@ -88,6 +93,7 @@ export const loadExaminerProfile = (): ExaminerProfile | null => {
         : getOrCreateDeviceId(),
       userId: typeof parsed.userId === 'string' ? parsed.userId.trim() : '',
       rememberMe: parsed.rememberMe !== false,
+      role: parsed.role === 'admin' ? 'admin' : 'examiner',
       savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : '',
     };
   } catch {
@@ -103,6 +109,7 @@ export const saveExaminerProfile = (
     deviceId?: string;
     userId?: string;
     rememberMe?: boolean;
+    role?: 'admin' | 'examiner';
   },
 ): ExaminerProfile => {
   const previous = loadExaminerProfile();
@@ -112,6 +119,7 @@ export const saveExaminerProfile = (
     deviceId: profile.deviceId?.trim() || getOrCreateDeviceId(),
     userId: profile.userId?.trim() ?? previous?.userId ?? '',
     rememberMe: profile.rememberMe ?? previous?.rememberMe ?? true,
+    role: profile.role ?? previous?.role ?? 'examiner',
     savedAt: new Date().toISOString(),
   };
   safeSet(EXAMINER_PROFILE_KEY, JSON.stringify(saved));
@@ -146,8 +154,18 @@ export const setSessionLocked = (locked: boolean): void => {
   else safeRemove(SESSION_LOCKED_KEY);
 };
 
-/** Normalised username derived from the triple name, e.g. "أحمد محمد علي" -> "أحمد". */
-export const usernameFromFullName = (fullName: string): string => {
+/**
+ * One-time cleanup of the retired local supervisor PIN.
+ *
+ * The drawer is now gated by the server-trusted `app_metadata.role`, so the
+ * old `albasar_admin_pin_hash_v1` digest is dead weight and must not linger
+ * on the device.
+ */
+export const purgeLegacyAdminPin = (): void => {
+  safeRemove('albasar_admin_pin_hash_v1');
+};
+
+/** Normalised username derived from the triple name, e.g. "أحمد محمد علي" -> "أحمد". */export const usernameFromFullName = (fullName: string): string => {
   const first = fullName.trim().split(/\s+/)[0] ?? '';
   return first.replace(/[^\p{L}\p{N}_-]/gu, '');
 };

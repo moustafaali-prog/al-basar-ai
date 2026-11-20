@@ -1,5 +1,5 @@
 -- ============================================================
--- Al-Basar AI · الأعمدة الناقصة + حاوية صور العين
+-- Al-Basar AI · الأعمدة الناقصة + حاوية صور العين (خاصة)
 -- (بدون المساس بالبيانات الحالية — آمن للتشغيل المتكرر)
 --
 -- ⚠️ اسم الجدول الصحيح هو public.student_screening_records
@@ -13,11 +13,30 @@
 --      "must be owner of table objects" في أي مشروع غيّر فيه storage.super_user.
 --    - الوصول للصور يُدار بالكامل عبر سياسات RLS أدناه.
 --
+-- ✅ سياسات جدول السجلات الآن مقيّدة بـ owner_id = auth.uid():
+--    كل فاحص يرى سجلاته فقط، والمشرف (app_metadata.role = 'admin') يرى الكل.
+--    لا توجد سياسة DELETE إطلاقاً.
+--
+-- ✅ حاوية الصور private (public = false) — أخلاقيات البحث (IRB):
+--    صور عيون الأطفال بيانات بيومترية حساسة؛ لا تُقرأ إلا عبر Signed URL
+--    صالحة ساعة واحدة، ويصعدها الفاحص داخل مجلده {auth.uid()}/… فقط.
+--
 -- ✅ سياسة UPDATE تحتوي USING و WITH CHECK معاً (شرط PostgreSQL)،
 --    فيُسمح بإعادة تصوير نفس التلميذ عبر upsert.
 -- ============================================================
 
--- ---------- 1) الأعمدة الناقصة ----------
+-- ---------- 1) دالة الصلاحية (تقرأ app_metadata حصراً) ----------
+-- app_metadata محفوظ في auth.users.raw_app_meta_data ولا يعدّله المستخدم
+-- (updateUser يعدّل user_metadata فقط). لذلك هي المصدر الوحيد الموثوق.
+create or replace function public.is_albasar_admin()
+returns boolean
+language sql
+stable
+as $$
+  select coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin', false);
+$$;
+
+-- ---------- 2) الأعمدة الناقصة ----------
 alter table public.student_screening_records
   add column if not exists external_eye_findings jsonb default '[]'::jsonb,
   add column if not exists eye_photo_url text,
@@ -25,40 +44,93 @@ alter table public.student_screening_records
   add column if not exists examiner_full_name text,
   add column if not exists device_id text;
 
--- ---------- 2) حاوية صور العين ----------
--- public = true مطلوب: التطبيق يبني رابط الصورة مباشرة عبر getPublicUrl()
--- دون توقيع روابط برمجياً. الصور مُرمّزة بـ Child_ID فقط ولا تحوي أسماء التلاميذ.
--- 📋 أخلاقيات البحث (IRB): فور انتهاء جمع البيانات اجعل الحاوية
---    private (public = false) واحصر القراءة بحساب المشرف فقط.
+-- ---------- 3) RLS الصارم على جدول السجلات ----------
+alter table public.student_screening_records enable row level security;
+
+-- إسقاط أي سياسة مفتوحة سابقة (تمنع تسريب بيانات التلاميذ عبر anon).
+drop policy if exists "albasar open select" on public.student_screening_records;
+drop policy if exists "albasar open insert" on public.student_screening_records;
+drop policy if exists "albasar open update" on public.student_screening_records;
+drop policy if exists "allow_anon_all" on public.student_screening_records;
+drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
+drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
+drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
+
+-- الفاحص يرى/يضيف/يحدث سجلاته فقط، والمشرف يرى ويدير كل سجلات الطلبة.
+create policy "albasar_select_own_or_admin"
+  on public.student_screening_records for select
+  to authenticated
+  using (owner_id = auth.uid() or public.is_albasar_admin());
+
+create policy "albasar_insert_own_or_admin"
+  on public.student_screening_records for insert
+  to authenticated
+  with check (owner_id = auth.uid() or public.is_albasar_admin());
+
+create policy "albasar_update_own_or_admin"
+  on public.student_screening_records for update
+  to authenticated
+  using (owner_id = auth.uid() or public.is_albasar_admin())
+  with check (owner_id = auth.uid() or public.is_albasar_admin());
+
+-- لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً، فالحذف ممنوع
+-- حتى على مستوى الدور الإداري. حمايتان: RLS + غياب صلاحية DELETE.
+
+-- 🔒 سحب صلاحيات anon من جدول السجلات (دفاع في العمق):
+--    RLS هي الحاجز الحقيقي (لا توجد أي سياسة لـ anon)، لكن سحب GRANT
+--    يجعل التبويق واضحاً: المفتاح المنشور لا يفتح جدول التلاميذ إطلاقاً.
+revoke select, insert, update, delete on public.student_screening_records from anon;
+
+-- ---------- 4) حاوية صور العين (خاصة تماماً) ----------
+-- المسار المعتمد في imageCompress.ts هو: {authUserId}/{childId}/{timestamp}.jpg
 insert into storage.buckets (id, name, public)
-values ('screening-photos', 'screening-photos', true)
-on conflict (id) do update set public = excluded.public;
+values ('screening-photos', 'screening-photos', false)
+on conflict (id) do update set public = false;
 
--- ---------- 3) سياسات RLS ----------
+-- ---------- 5) سياسات RLS على كائنات التخزين ----------
 drop policy if exists "albasar photo open read" on storage.objects;
-create policy "albasar photo open read"
-  on storage.objects for select to anon, authenticated
-  using (bucket_id = 'screening-photos');
-
 drop policy if exists "albasar photo open insert" on storage.objects;
-create policy "albasar photo open insert"
-  on storage.objects for insert to anon, authenticated
-  with check (bucket_id = 'screening-photos');
-
 drop policy if exists "albasar photo open update" on storage.objects;
-create policy "albasar photo open update"
-  on storage.objects for update to anon, authenticated
-  using (bucket_id = 'screening-photos')
-  with check (bucket_id = 'screening-photos');
+drop policy if exists "albasar_photo_select_own_or_admin" on storage.objects;
+drop policy if exists "albasar_photo_insert_own_or_admin" on storage.objects;
+drop policy if exists "albasar_photo_update_own_or_admin" on storage.objects;
 
--- ملاحظة: لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً،
--- فالحذف ممنوع عن anon/authenticated حتى لو منحهم Supabase صلاحية
--- الجدول على مستوى المنصة.
+create policy "albasar_photo_select_own_or_admin"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  );
 
--- ---------- 4) صلاحيات جدول storage (اختيارية + لا تُفشل السكريبت) ----------
+create policy "albasar_photo_insert_own_or_admin"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  );
+
+create policy "albasar_photo_update_own_or_admin"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  )
+  with check (
+    bucket_id = 'screening-photos'
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_albasar_admin())
+  );
+
+-- ملاحظة: لا توجد سياسة DELETE على storage.objects إطلاقاً.
+
+-- ---------- 6) صلاحيات جدول storage (اختيارية + لا تُفشل السكريبت) ----------
 -- Supabase منح anon/authenticated صلاحيات SELECT/INSERT/UPDATE/DELETE أصلاً
 -- (migration 0046). هذا المقطع يضمن الـ SELECT/INSERT/UPDATE فقط إن اختلفت
 -- إعدادات المشروع، ولا يقوّي DELETE أبداً. أي فشل هنا لا يوقف التنفيذ.
+-- ⚠️ ملاحظة أمنية: منح جدول storage لـ anon يبقى غير ضروري بعد تطبيق
+--    السياسات أعلاه، لأن RLS يمنع anon من المرور بها (لا توجد سياسات لـ anon).
 do $$
 begin
   grant select, insert, update on storage.objects to anon, authenticated;
@@ -67,5 +139,5 @@ exception
     raise notice 'تعذّر منح صلاحيات storage.objects (غير مالك للجدول) — سياسات RLS أعلاه تكفي.';
 end $$;
 
--- ---------- 5) تحديث ذاكرة PostgREST فوراً حتى لا تُرجع الواجهة خطأ PGRST204 ----------
+-- ---------- 7) تحديث ذاكرة PostgREST فوراً حتى لا تُرجع الواجهة خطأ PGRST204 ----------
 NOTIFY pgrst, 'reload schema';

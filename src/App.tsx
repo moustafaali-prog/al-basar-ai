@@ -6,21 +6,26 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  BarChart3,
+  BookOpen,
   Camera,
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   Fingerprint,
+  LayoutDashboard,
   Lock,
   LogIn,
   LogOut,
   RefreshCw,
-  Settings,
+  Ruler,
   Share,
   Smartphone,
   Sparkles,
   UserCheck,
+  Wrench,
 } from 'lucide-react';
 
 import {
@@ -62,7 +67,8 @@ import { InteractiveStudentTrainingModal } from './components/InteractiveStudent
 import { useFeedback } from './components/FeedbackProvider';
 import { isSupabaseConfigured } from './utils/supabaseConfig';
 import { CloudAuthModal } from './components/CloudAuthModal';
-import { AdminPinGate } from './components/AdminPinGate';
+import { AdminDashboard } from './components/AdminDashboard';
+import { ExaminerRecordsPanel } from './components/ExaminerRecordsPanel';
 import { CloudSettingsPanel } from './components/CloudSettingsPanel';
 import type { CloudAuthUser } from './utils/supabaseAuth';
 import {
@@ -70,11 +76,13 @@ import {
   getOrCreateDeviceId,
   isSessionLocked,
   loadExaminerProfile,
+  purgeLegacyAdminPin,
   saveExaminerProfile,
   setSessionLocked,
   type ExaminerProfile,
 } from './utils/examinerProfile';
 import {
+  clearBiometricCredential,
   getBiometricBinding,
   hasBiometricCredential,
 } from './utils/biometricAuth';
@@ -146,12 +154,19 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('protocol');
   const [lastClinicalTab, setLastClinicalTab] = useState<ClinicalStepId>('protocol');
   const [adminOpen, setAdminOpen] = useState(false);
-  const [adminPinOpen, setAdminPinOpen] = useState(false);
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [qrScannerCloseSignal, setQrScannerCloseSignal] = useState(0);
   /** Compact account popover (lock / sign-out) in the top bar. */
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [adminPanel, setAdminPanel] = useState<'calib'|'database'|'sus'|'method'|'training'|'cloud'>('calib');
+  /**
+   * Supervisor drawer panels.
+   *
+   * - `dashboard` — the live, role-scoped data view (admin only).
+   * - `tools`     — calibration / training / cloud plumbing (admin only).
+   * - `calib`     — the examiner's screen-calibration tool.
+   * - `records`   — the examiner's own records + CSV download.
+   */
+  const [adminPanel, setAdminPanel] = useState<'dashboard'|'tools'|'calib'|'records'|'sus'|'method'|'training'|'cloud'>('calib');
 
   // Methodology Modal State
   const [isMethodologyOpen, setIsMethodologyOpen] = useState(false);
@@ -206,6 +221,13 @@ export default function App() {
   const [whoPreScreen, setWHOPreScreen] = useState<WHOPreScreenDraft>(EMPTY_WHO_PRE_SCREEN);
   const [paperExaminerId, setPaperExaminerId] = useState(INITIAL_SESSION_CONTEXT.paperExaminerId);
   const [smartExaminerId, setSmartExaminerId] = useState(INITIAL_SESSION_CONTEXT.smartExaminerId);
+  /**
+   * The second examiner on duty (dual-examiner blinding). When set, the paper
+   * and digital stations each offer a one-tap hand-over.
+   */
+  const [alternateExaminerId, setAlternateExaminerId] = useState(
+    INITIAL_SESSION_CONTEXT.alternateExaminerId,
+  );
   const [paperStartedAt, setPaperStartedAt] = useState('');
   const [paperCompletedAt, setPaperCompletedAt] = useState('');
   const [smartStartedAt, setSmartStartedAt] = useState('');
@@ -273,6 +295,17 @@ export default function App() {
   /** Records waiting for the next cloud sync. */
   const pendingSyncCount = records.filter((record) => record._syncStatus !== 'synced').length;
 
+  /**
+   * Server-trusted role.
+   *
+   * The role is **never** decided by the client: it is read from the Supabase
+   * JWT (`app_metadata.role`), which only the Supabase dashboard or a
+   * `service_role` key can set. A signed-out device is always an examiner.
+   */
+  const effectiveRole: 'admin' | 'examiner' =
+    cloudUser?.role === 'admin' ? 'admin' : 'examiner';
+  const isAdminSession = effectiveRole === 'admin';
+
   /* ---------------- Native PWA install experience ---------------- */
   const installPrompt = useInstallPrompt();
 
@@ -280,7 +313,6 @@ export default function App() {
   const closeOverlayFromBack = useCallback((id: string) => {
     if (id === 'auth') { setCloudLoginOpen(false); setAuthGateMode(false); setSessionActive(true); return; }
     if (id === 'admin') { setAdminOpen(false); return; }
-    if (id === 'admin-pin') { setAdminPinOpen(false); return; }
     if (id === 'training') { setIsTrainingOpen(false); return; }
     if (id === 'methodology') { setIsMethodologyOpen(false); return; }
     if (id === 'qr-scanner') {
@@ -301,7 +333,6 @@ export default function App() {
   useEffect(() => {
     const overlays: Array<[string, boolean]> = [
       ['auth', cloudLoginOpen],
-      ['admin-pin', adminPinOpen],
       ['admin', adminOpen],
       ['training', isTrainingOpen],
       ['methodology', isMethodologyOpen],
@@ -319,7 +350,7 @@ export default function App() {
     previous.forEach((id) => {
       if (!openIds.includes(id)) backButton.registerClose(id);
     });
-  }, [cloudLoginOpen, adminPinOpen, adminOpen, isTrainingOpen, isMethodologyOpen, qrScannerOpen, backButton]);
+  }, [cloudLoginOpen, adminOpen, isTrainingOpen, isMethodologyOpen, qrScannerOpen, backButton]);
 
   useEffect(() => {
     const updateOnline = () => setIsOnline(navigator.onLine);
@@ -430,18 +461,22 @@ export default function App() {
     const profile = loadExaminerProfile();
     setExaminerProfile(profile);
     setBiometricBound(hasBiometricCredential());
+    // The retired local supervisor PIN is replaced by the server-trusted role.
+    purgeLegacyAdminPin();
 
     const locked = isSessionLocked();
     const canRestore = Boolean(profile?.rememberMe) && !locked;
 
     if (canRestore && profile) {
       // Restore the local session immediately — the cloud JWT refresh happens
-      // in the background and never blocks the first paint.
+      // in the background and never blocks the first paint. The role is left
+      // at the least-privilege default until the server session confirms it.
       setSessionActive(true);
       setCloudUser({
         id: profile.userId || `local-${profile.deviceId}`,
         email: profile.email || null,
         fullName: profile.fullName || null,
+        role: 'examiner',
       });
       if (profile.fullName) {
         setExaminerId((current) => (current.trim() ? current : profile.fullName));
@@ -478,6 +513,7 @@ export default function App() {
       examinerId,
       paperExaminerId,
       smartExaminerId,
+      alternateExaminerId,
       gradeLevel,
     });
   }, [
@@ -487,6 +523,7 @@ export default function App() {
     examinerId,
     paperExaminerId,
     smartExaminerId,
+    alternateExaminerId,
     gradeLevel,
   ]);
 
@@ -514,6 +551,26 @@ export default function App() {
       return;
     }
 
+    /**
+     * Cloud sync requires a real, signed-in Supabase session.
+     *
+     * The former implementation silently fell back to the public `anon` key.
+     * Because the table carried table-wide SELECT/UPDATE grants, that made
+     * every child's record readable and writable by anyone holding the
+     * publishable key. Records captured offline now simply stay `pending` in
+     * the device's local store until the examiner signs in.
+     */
+    if (!cloudUser || cloudUser.id.startsWith('local-')) {
+      notify(
+        compact
+          ? '⚠️ سجّل الدخول أولاً لمزامنة السجلات — السجلات محفوظة محلياً بأمان.'
+          : 'سجّل الدخول إلى حسابك أولاً: المزامنة السحابية تتطلب حساباً موثقاً، والسجلات تبقى محفوظة محلياً حتى ذلك الحين.',
+        'info',
+      );
+      openCloudLogin();
+      return;
+    }
+
     const { getSupabaseClient, upsertScreeningRecord } = await import('./utils/supabaseClient');
     const client = getSupabaseClient();
     if (!client) {
@@ -535,28 +592,34 @@ export default function App() {
       let lastError = '';
 
       for (const rec of pending) {
-        // Photo handling: the compressed JPEG is kept in IndexedDB (keyed by
-        // Child_ID) so localStorage never grows. It is uploaded to Supabase
-        // Storage here and the public URL is attached as `eye_photo_url`.
-        if (!rec.Eye_Photo_URL || rec.Eye_Photo_URL.startsWith('data:')) {
+        /**
+         * Photo handling: the compressed JPEG stays in IndexedDB (keyed by
+         * Child_ID) so localStorage never grows. It is uploaded to the
+         * **private** `screening-photos` bucket under `{auth.uid()}/…`, and
+         * only the storage *object path* is persisted in `eye_photo_url`.
+         * Every read resolves that path into a short-lived signed URL.
+         */
+        const storedPhoto = (rec.Eye_Photo_URL ?? '').trim();
+        const isUnuploaded = !storedPhoto || storedPhoto.startsWith('data:');
+        const isLegacyPublicUrl = storedPhoto.startsWith('http');
+        if (isUnuploaded || isLegacyPublicUrl) {
           try {
             const { getEyePhoto } = await import('./utils/eyePhotoStore');
             const { compressImageToBlob, photoFileName } = await import('./utils/imageCompress');
-            const { loadCloudAuthUser } = await import('./utils/supabaseAuth');
-            const user = await loadCloudAuthUser();
-            const userId = user?.id ?? 'anon';
 
             let blob = await getEyePhoto(rec.Child_ID);
-            if (!blob && rec.Eye_Photo_URL?.startsWith('data:')) {
-              blob = await compressImageToBlob(rec.Eye_Photo_URL, 1024, 0.85);
+            if (!blob && storedPhoto.startsWith('data:')) {
+              blob = await compressImageToBlob(storedPhoto, 1024, 0.85);
             }
 
             if (blob) {
-              const path = photoFileName(userId, rec.Child_ID);
-              const { error: upErr } = await client.storage.from('screening-photos').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+              const path = photoFileName(cloudUser.id, rec.Child_ID);
+              const { error: upErr } = await client.storage
+                .from('screening-photos')
+                .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
               if (!upErr) {
-                const { data } = client.storage.from('screening-photos').getPublicUrl(path);
-                rec.Eye_Photo_URL = data.publicUrl;
+                // Store the PATH, never a public URL — the bucket is private.
+                rec.Eye_Photo_URL = path;
               } else {
                 console.warn('Photo upload failed', upErr);
               }
@@ -567,7 +630,10 @@ export default function App() {
         }
 
         try {
-          const diag = await upsertScreeningRecord(rec);
+          // The owner is the signed-in account, unless the row already
+          // belongs to another examiner (e.g. a supervisor editing a field
+          // record) — in that case the original owner is preserved.
+          const diag = await upsertScreeningRecord(rec, rec.Owner_ID || cloudUser.id);
           diag.droppedColumns?.forEach((column) => droppedColumns.add(column));
           syncedIds.add(rec.Child_ID);
           syncedCount++;
@@ -698,19 +764,36 @@ export default function App() {
     const fullName = user.fullName?.trim();
     const email = user.email?.trim() ?? '';
     // The modal already persisted the identity (full name + device); reuse it
-    // so the top-bar badge and the record attribution stay consistent.
+    // so the top-bar badge and the record attribution stay consistent. The
+    // role is mirrored from the server JWT — never from client input.
     const persisted = loadExaminerProfile();
     const profile = persisted ?? saveExaminerProfile({
       fullName: fullName ?? '',
       email: email || '',
       deviceId: examinerProfile?.deviceId,
     });
-    setExaminerProfile(profile);
+    const withRole = saveExaminerProfile({
+      fullName: profile.fullName,
+      email: profile.email,
+      deviceId: profile.deviceId,
+      userId: user.id,
+      rememberMe: profile.rememberMe,
+      role: user.role,
+    });
+    setExaminerProfile(withRole);
     setBiometricBound(hasBiometricCredential());
-    if (profile.fullName) {
-      setExaminerId((current) => (current.trim() ? current : profile.fullName));
+    if (withRole.fullName) {
+      setExaminerId((current) => (current.trim() ? current : withRole.fullName));
     }
     notify('تم تسجيل الدخول إلى سحابة المشرف.', 'success');
+
+    // An admin session immediately loads the full dataset so the live
+    // dashboard is never empty when it is opened.
+    if (user.role === 'admin') {
+      window.setTimeout(() => {
+        void pullLatestFromCloud();
+      }, 400);
+    }
   };
 
   const handleCloseCloudLogin = () => {
@@ -721,15 +804,21 @@ export default function App() {
     setSessionActive(true);
   };
 
-  /** Locks the app on this device; the gate returns with the biometric button. */
+  /**
+   * 🔒 Lock the app — WITHOUT revoking the Supabase session.
+   *
+   * The `refresh_token` stays alive, so the next unlock (biometric or
+   * password) lands on a live, renewable session and cloud sync keeps
+   * working. Only the UI is gated.
+   */
   const handleLockApp = async () => {
     const binding = getBiometricBinding();
     const accepted = await confirmAction({
-      title: 'قفل التطبيق على هذا الجهاز؟',
+      title: 'قفل الجلسة على هذا الجهاز؟',
       message: binding
-        ? 'يمكنك فتحه لاحقاً ببصمة الإصبع أو الوجه — بدون إنترنت. تبقى السجلات محفوظة محلياً.'
-        : 'سيلزم إدخال البريد الإلكتروني والرمز السري عند فتح التطبيق. تبقى السجلات محفوظة محلياً.',
-      confirmLabel: 'قفل التطبيق',
+        ? 'يمكنك فتحه لاحقاً ببصمة الإصبع أو الوجه — بدون إنترنت. تبقى جلسة Supabase سارية وتستمر المزامنة فور فتح التطبيق.'
+        : 'سيلزم إدخال البريد الإلكتروني والرمز السري عند فتح التطبيق. تبقى جلسة Supabase سارية وتستمر المزامنة فور فتح التطبيق.',
+      confirmLabel: '🔒 قفل الجلسة',
     });
     if (!accepted) return;
     setSessionLocked(true);
@@ -738,17 +827,19 @@ export default function App() {
     setAuthGateMode(true);
     // Re-open the gate so the biometric button is immediately reachable.
     window.setTimeout(() => setCloudLoginOpen(true), 60);
-    notify('تم قفل التطبيق. افتحه بالبصمة أو بالرمز السري.', 'info');
+    notify('تم قفل الجلسة. افتحها بالبصمة أو بالرمز السري — المزامنة تبقى فعّالة.', 'info');
   };
 
+  /**
+   * 🚪 Full sign-out — revokes the Supabase session and clears the device
+   * binding, so the next user on this handset starts from a clean gate.
+   */
   const handleCloudSignOut = async () => {
-    const binding = getBiometricBinding();
     const accepted = await confirmAction({
-      title: 'تسجيل الخروج من السحابة؟',
-      message: binding
-        ? 'ستبقى جميع السجلات محفوظة محلياً على هذا الجهاز، ويمكنك فتح التطبيق لاحقاً بالبصمة — أو بحسابك عند عودة الشبكة.'
-        : 'ستبقى جميع السجلات محفوظة محلياً على هذا الجهاز. المزامنة السحابية تتطلب تسجيل الدخول مرة أخرى.',
-      confirmLabel: 'تسجيل الخروج',
+      title: 'تبديل الحساب / خروج نهائي؟',
+      message: 'سيتم إنهاء جلسة Supabase وإلغاء ربط البصمة على هذا الجهاز. تبقى السجلات المحلية محفوظة على الجهاز، وسيُطلب من الحساب التالي تسجيل الدخول قبل المزامنة.',
+      confirmLabel: '🚪 خروج نهائي',
+      danger: true,
     });
     if (!accepted) return;
     try {
@@ -758,34 +849,38 @@ export default function App() {
       // حتى إذا فشل طلب الشبكة، نُمسح الجلسة محلياً
     }
     setCloudUser(null);
-    // The local identity (name / email / device) is NOT a credential — it is
-    // kept so the biometric quick-unlock can restore the full profile offline.
-    // Only the silent "remember me" restore is switched off.
-    const current = loadExaminerProfile();
-    if (current) {
-      const kept = saveExaminerProfile({
-        fullName: current.fullName,
-        email: current.email,
-        deviceId: current.deviceId,
-        userId: current.userId,
-        rememberMe: false,
-      });
-      setExaminerProfile(kept);
-    } else {
-      clearExaminerProfile();
-      setExaminerProfile(null);
+    // The biometric binding belongs to the *device*, not to the account, and
+    // must not be usable by the next user of this handset.
+    try {
+      clearBiometricCredential();
+    } catch {
+      // ignore storage failures
     }
-    setSessionLocked(true);
+    setBiometricBound(false);
+    clearExaminerProfile();
+    setExaminerProfile(null);
+    setSessionLocked(false);
     setSessionActive(false);
     setAuthGateMode(true);
     setCloudLoginOpen(true);
-    notify('تم تسجيل الخروج. الفحص المحلي مستمر.', 'info');
+    notify('تم تسجيل الخروج وإلغاء ربط البصمة. الفحص المحلي مستمر.', 'info');
   };
 
   const generateNextId = (sourceRecords: StudentScreeningRecord[] = records) => {
-    // Sequential protocol IDs (BAB-101, BAB-102, ...) derived from the saved
-    // records; crossover is auto-counterbalanced by ID parity (SPIRIT Item 16).
-    const nextId = generateParticipantId(sourceRecords.map((record) => record.Child_ID));
+    /**
+     * Device-scoped protocol IDs (`BAB-A4F-101`).
+     *
+     * The numeric tail keeps its SPIRIT Item 16 meaning (parity drives the
+     * paper-first / digital-first crossover), while the 3-character device
+     * prefix makes the code globally unique. Without it, two teams screening
+     * different schools offline would both mint `BAB-101` and one team's
+     * record would silently overwrite the other's on sync.
+     */
+    const deviceId = examinerProfile?.deviceId || getOrCreateDeviceId();
+    const nextId = generateParticipantId(
+      sourceRecords.map((record) => record.Child_ID),
+      deviceId,
+    );
     const nextNumber = extractParticipantNumber(nextId) ?? 0;
     setChildId(nextId);
     setCrossoverSequence(crossoverSequenceForParticipantNumber(nextNumber || 1));
@@ -1343,7 +1438,7 @@ export default function App() {
                       {biometricBound
                         ? <Fingerprint size={17} aria-hidden="true" />
                         : <Lock size={17} aria-hidden="true" />}
-                      <span>قفل التطبيق</span>
+                      <span>🔒 قفل الجلسة (بالبصمة)</span>
                     </button>
                     <button
                       type="button"
@@ -1355,7 +1450,7 @@ export default function App() {
                       }}
                     >
                       <LogOut size={17} aria-hidden="true" />
-                      <span>تسجيل الخروج</span>
+                      <span>🚪 تبديل الحساب / خروج نهائي</span>
                     </button>
                   </div>
                 )}
@@ -1373,15 +1468,20 @@ export default function App() {
               </button>
             )}
 
-            {/* 3 · PIN-protected supervisor drawer */}
+            {/* 3 · Role-aware drawer: 📊 الإدارة for an admin, 🧰 الأدوات for an examiner */}
             <button
               type="button"
-              onClick={() => setAdminPinOpen(true)}
-              className="icon-action icon-action--admin"
-              aria-label="لوحة المشرف والبيانات"
-              title="لوحة المشرف والبيانات"
+              onClick={() => {
+                setAdminPanel(isAdminSession ? 'dashboard' : 'calib');
+                setAdminOpen(true);
+              }}
+              className={`icon-action icon-action--admin${isAdminSession ? ' is-admin' : ''}`}
+              aria-label={isAdminSession ? 'لوحة الإدارة' : 'أدوات الفاحص'}
+              title={isAdminSession ? '📊 الإدارة' : '🧰 الأدوات'}
             >
-              <Settings size={19} aria-hidden="true" />
+              {isAdminSession
+                ? <LayoutDashboard size={19} aria-hidden="true" />
+                : <Wrench size={19} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -1452,6 +1552,9 @@ export default function App() {
                   setCrossoverSequence={setCrossoverSequence}
                   paperExaminerId={paperExaminerId}
                   setPaperExaminerId={setPaperExaminerId}
+                  examinerName={examinerProfile?.fullName || examinerId}
+                  alternateExaminerId={alternateExaminerId}
+                  setAlternateExaminerId={setAlternateExaminerId}
                   onPaperTestStarted={() => {
                     setPaperExaminerId((current) => current || examinerId || 'PAPER-EXAMINER');
                     setPaperStartedAt(new Date().toISOString());
@@ -1490,6 +1593,8 @@ export default function App() {
                   setSmartTimeSec={setSmartTimeSec}
                   smartExaminerId={smartExaminerId}
                   setSmartExaminerId={setSmartExaminerId}
+                  examinerName={examinerProfile?.fullName || examinerId}
+                  alternateExaminerId={alternateExaminerId}
                   smartExaminerLocked={Boolean(smartStartedAt)}
                   onSmartTestStarted={(eye) => {
                     setSmartExaminerId((current) => current || examinerId || 'SMART-EXAMINER');
@@ -1568,7 +1673,10 @@ export default function App() {
                   whoPreScreen={whoPreScreen}
                   eyePhotoDataUrl={eyePhoto?.dataUrl}
                   onCommitRecord={() => { void handleCommitRecord(); }}
-                  onProceedToDatabase={() => { setAdminPanel('database'); setAdminOpen(true); }}
+                  onProceedToDatabase={() => {
+                    setAdminPanel(isAdminSession ? 'dashboard' : 'records');
+                    setAdminOpen(true);
+                  }}
                 />
               )}
             </div>
@@ -1692,66 +1800,143 @@ export default function App() {
         <div className="admin-drawer-overlay" onClick={() => setAdminOpen(false)}>
           <div className="admin-drawer" onClick={e => e.stopPropagation()}>
             <div className="admin-drawer__header">
-              <h2>لوحة المشرف والبيانات</h2>
+              <h2>{isAdminSession ? '📊 لوحة الإدارة' : '🧰 الأدوات'}</h2>
               <button type="button" onClick={() => setAdminOpen(false)} aria-label="إغلاق">✕</button>
             </div>
-            <nav className="admin-drawer__tabs">
-              <button type="button" onClick={() => setAdminPanel('calib')} className={adminPanel === 'calib' ? 'active' : ''}>المعايرة</button>
-              <button type="button" onClick={() => setAdminPanel('database')} className={adminPanel === 'database' ? 'active' : ''}>السجلات والإحصاء</button>
-              <button type="button" onClick={() => setAdminPanel('sus')} className={adminPanel === 'sus' ? 'active' : ''}>تقييم التطبيق</button>
-              <button type="button" onClick={() => setAdminPanel('method')} className={adminPanel === 'method' ? 'active' : ''}>المنهجية والدليل</button>
-              <button type="button" onClick={() => setAdminPanel('training')} className={adminPanel === 'training' ? 'active' : ''}>🎓 تدريب الطلبة</button>
-              <button type="button" onClick={() => setAdminPanel('cloud')} className={adminPanel === 'cloud' ? 'active' : ''}>☁️ السحابة والمزامنة</button>
-            </nav>
-            <div className="admin-drawer__content">
-              {adminPanel === 'calib' && (
-                <CalibrationModule calibration={calibration} onUpdateCalibration={handleUpdateCalibration} />
-              )}
-              {adminPanel === 'database' && (
-                <MasterDatabaseAndStatistics
-                  records={records}
-                  onUpdateRecord={handleUpdateRecord}
-                  onImportRecords={handleImportRecords}
-                  onClearRecords={handleClearRecords}
-                  onPullLatest={pullLatestFromCloud}
-                />
-              )}
-              {adminPanel === 'sus' && <NurseSUSScale />}
-              {adminPanel === 'method' && (
-                <div className="admin-method">
-                  <button type="button" onClick={() => setIsMethodologyOpen(true)} className="m3-btn m3-btn--primary">فتح دليل المنهجية والمعيار الذهبي</button>
-                  <p style={{marginTop:'12px'}}>يمكنك أيضاً تحميل نسخة مستقلة من الدليل.</p>
+
+            {isAdminSession ? (
+              <>
+                <nav className="admin-drawer__tabs">
+                  <button
+                    type="button"
+                    onClick={() => setAdminPanel('dashboard')}
+                    className={adminPanel === 'dashboard' ? 'active' : ''}
+                  >
+                    📊 لوحة البيانات
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminOpen(false);
+                      navigateToTab('protocol');
+                    }}
+                  >
+                    🩺 وضع الفحص
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminPanel('tools')}
+                    className={adminPanel === 'tools' ? 'active' : ''}
+                  >
+                    🛠️ أدوات النظام والمعايرة
+                  </button>
+                </nav>
+                <div className="admin-drawer__content">
+                  {adminPanel === 'dashboard' && (
+                    <AdminDashboard
+                      records={records}
+                      isLoading={isSyncing}
+                      onRefresh={pullLatestFromCloud}
+                    />
+                  )}
+                  {adminPanel === 'tools' && (
+                    <div className="space-y-4">
+                      <CalibrationModule calibration={calibration} onUpdateCalibration={handleUpdateCalibration} />
+                      <div className="m3-card" style={{ padding: '18px' }}>
+                        <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 800 }}>🎓 تدريب الطلبة الميداني</h3>
+                        <p style={{ margin: '0 0 14px', color: 'var(--m3-muted)', fontSize: '12.5px', lineHeight: 1.8 }}>
+                          محاكي تفاعلي بصوت د. مصطفى علي غازي الشمري: ست محطات مصوّرة، وخمس حالات
+                          واقعية حسب منظمة الصحة العالمية 2025، ووضع اختبار للحل قبل كشفه.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setIsTrainingOpen(true)}
+                          className="m3-btn m3-btn--primary"
+                        >
+                          فتح دليل التدريب التفاعلي
+                        </button>
+                      </div>
+                      <div className="m3-card" style={{ padding: '18px' }}>
+                        <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 800 }}>📘 المنهجية والمعيار الذهبي</h3>
+                        <p style={{ margin: '0 0 14px', color: 'var(--m3-muted)', fontSize: '12.5px', lineHeight: 1.8 }}>
+                          مرجع البروتوكول، معايير التصنيف، وضوابط التوثيق لمتابعة الزيارة الثانية.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setIsMethodologyOpen(true)}
+                          className="m3-btn m3-btn--primary"
+                        >
+                          فتح دليل المنهجية
+                        </button>
+                      </div>
+                      <CloudSettingsPanel
+                        isOnline={isOnline}
+                        isSyncing={isSyncing}
+                        cloudUser={cloudUser}
+                        onOpenLogin={openCloudLogin}
+                        onSync={() => void syncLocalRecordsToCloud()}
+                        onPullLatest={() => void pullLatestFromCloud()}
+                      />
+                      <NurseSUSScale />
+                      <details className="m3-card" style={{ padding: '18px' }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: '15px' }}>
+                          📈 الإحصاء والتحقق (كابا · 2×2 · توثيق المرجع)
+                        </summary>
+                        <div style={{ marginTop: '14px' }}>
+                          <MasterDatabaseAndStatistics
+                            records={records}
+                            onUpdateRecord={handleUpdateRecord}
+                            onImportRecords={handleImportRecords}
+                            onClearRecords={handleClearRecords}
+                            onPullLatest={pullLatestFromCloud}
+                          />
+                        </div>
+                      </details>
+                    </div>
+                  )}
                 </div>
-              )}
-              {adminPanel === 'cloud' && (
-                <CloudSettingsPanel
-                  isOnline={isOnline}
-                  isSyncing={isSyncing}
-                  cloudUser={cloudUser}
-                  onOpenLogin={openCloudLogin}
-                  onSync={() => void syncLocalRecordsToCloud()}
-                  onPullLatest={() => void pullLatestFromCloud()}
-                />
-              )}
-              {adminPanel === 'training' && (
-                <div className="admin-method">
-                  <div className="m3-card" style={{ padding: '18px' }}>
-                    <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 800 }}>🎓 تدريب الطلبة الميداني</h3>
-                    <p style={{ margin: '0 0 14px', color: 'var(--m3-muted)', fontSize: '12.5px', lineHeight: 1.8 }}>
-                      محاكي تفاعلي بصوت د. مصطفى علي غازي الشمري: ست محطات مصوّرة، وخمس حالات
-                      واقعية حسب منظمة الصحة العالمية 2025، ووضع اختبار للحل قبل كشفه.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setIsTrainingOpen(true)}
-                      className="m3-btn m3-btn--primary"
-                    >
-                      فتح دليل التدريب التفاعلي
-                    </button>
-                  </div>
+              </>
+            ) : (
+              <>
+                <nav className="admin-drawer__tabs">
+                  <button
+                    type="button"
+                    onClick={() => setAdminPanel('calib')}
+                    className={adminPanel === 'calib' ? 'active' : ''}
+                  >
+                    📏 معايرة الشاشة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminOpen(false);
+                      setIsTrainingOpen(true);
+                    }}
+                  >
+                    📘 دليل التدريب
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminPanel('records')}
+                    className={adminPanel === 'records' ? 'active' : ''}
+                  >
+                    📥 سجلاتي وتنزيلها
+                  </button>
+                </nav>
+                <div className="admin-drawer__content">
+                  {adminPanel === 'calib' && (
+                    <CalibrationModule calibration={calibration} onUpdateCalibration={handleUpdateCalibration} />
+                  )}
+                  {adminPanel === 'records' && (
+                    <ExaminerRecordsPanel
+                      records={records}
+                      ownerId={cloudUser?.id ?? null}
+                      deviceId={examinerProfile?.deviceId ?? null}
+                    />
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1775,16 +1960,6 @@ export default function App() {
         isGate={authGateMode}
         onClose={handleCloseCloudLogin}
         onSignedIn={handleCloudSignedIn}
-      />
-
-      {/* Supervisor PIN gate in front of the Admin Drawer */}
-      <AdminPinGate
-        isOpen={adminPinOpen}
-        onClose={() => setAdminPinOpen(false)}
-        onUnlock={() => {
-          setAdminPinOpen(false);
-          setAdminOpen(true);
-        }}
       />
 
       <footer className="app-footer">

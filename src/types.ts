@@ -50,6 +50,11 @@ export interface StudentScreeningRecord {
   Examiner_Full_Name?: string;
   /** Stable per-device identifier used to attribute every record. */
   Device_ID?: string;
+  /**
+   * Supabase account that owns this row (`auth.uid()`).
+   * Set on upload; populated when an admin pulls the whole dataset.
+   */
+  Owner_ID?: string;
   /** Optional local sync metadata; not persisted to Supabase. */
   _syncStatus?: 'pending' | 'synced';
 

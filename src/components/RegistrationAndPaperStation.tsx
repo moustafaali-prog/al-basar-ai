@@ -41,6 +41,12 @@ interface RegistrationProps {
   setCrossoverSequence: (seq: string) => void;
   paperExaminerId: string;
   setPaperExaminerId: (id: string) => void;
+  /** The signed-in examiner on duty — pre-fills the paper-station examiner id. */
+  examinerName?: string;
+  /** The second examiner (dual-examiner blinding) — one-tap swap at the station. */
+  alternateExaminerId?: string;
+  /** Editable second-examiner id (dual-examiner blinding). */
+  setAlternateExaminerId?: (id: string) => void;
   onPaperTestStarted: () => void;
   showPaperStation: boolean;
   isDigitalFirst: boolean;
@@ -220,6 +226,9 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
   setCrossoverSequence,
   paperExaminerId,
   setPaperExaminerId,
+  examinerName,
+  alternateExaminerId,
+  setAlternateExaminerId,
   onPaperTestStarted,
   showPaperStation,
   isDigitalFirst,
@@ -287,9 +296,20 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
       examinerId,
       paperExaminerId,
       smartExaminerId: latest.smartExaminerId,
+      alternateExaminerId: latest.alternateExaminerId,
       gradeLevel,
     });
   }, [schoolName, schoolSector, referralPHCC, examinerId, paperExaminerId, gradeLevel]);
+
+  /**
+   * Pre-fill the paper-station examiner from the signed-in profile.
+   * An explicit choice is never overwritten (dual-examiner blinding).
+   */
+  useEffect(() => {
+    if (paperExaminerId) return;
+    const fallback = (examinerName || '').trim();
+    if (fallback) setPaperExaminerId(fallback);
+  }, [examinerName, paperExaminerId, setPaperExaminerId]);
 
   useEffect(() => {
     let interval: any = null;
@@ -445,6 +465,44 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
                   placeholder="NURSE-01"
                   disabled={identityLocked}
                 />
+              </div>
+              <div className="field">
+                <label>فاحص المحطة الورقية (6م)</label>
+                <input
+                  value={paperExaminerId}
+                  onChange={(event) => setPaperExaminerId(event.target.value)}
+                  className="m3-input m3-input--mono"
+                  placeholder={examinerName || 'اسم/كود الفاحص'}
+                  disabled={identityLocked}
+                  autoComplete="off"
+                />
+                {alternateExaminerId && !identityLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setPaperExaminerId(alternateExaminerId)}
+                    className="m3-btn m3-btn--sm m3-btn--tonal"
+                    title="تعمية ثنائية: سلّم الفحص الورقي إلى الفاحص الثاني"
+                  >
+                    👥 تبديل مع الفاحص الثاني
+                  </button>
+                )}
+                <p className="field-hint">
+                  تعمية ثنائية: يُسجَّل الفاحص الذي أجرى فحص لوح 6 أمتار بشكل منفصل.
+                </p>
+              </div>
+              <div className="field">
+                <label>الفاحص الثاني (للتعمية)</label>
+                <input
+                  value={alternateExaminerId}
+                  onChange={(event) => setAlternateExaminerId(event.target.value)}
+                  className="m3-input m3-input--mono"
+                  placeholder="اسم/كود الفاحص الثاني"
+                  disabled={identityLocked}
+                  autoComplete="off"
+                />
+                <p className="field-hint">
+                  اتركه فارغاً إذا أُجري الفحص بفاحص واحد.
+                </p>
               </div>
               <div className="field">
                 <label>المركز الصحي التابع</label>
