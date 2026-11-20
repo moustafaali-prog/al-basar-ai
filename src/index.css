@@ -40,6 +40,10 @@
   --m3-shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 22px -16px rgba(15, 23, 42, 0.16);
   --m3-font: "Cairo", "IBM Plex Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif;
 
+  /* Native bottom tab bar metrics (mobile shell). */
+  --albasar-tabs-h: 67px;
+  --albasar-mobile-actions-h: 73px;
+
   font-family: var(--m3-font);
   color: var(--m3-text);
   background: var(--m3-bg);
@@ -54,18 +58,66 @@
 }
 
 * { box-sizing: border-box; }
-html { min-width: 280px; min-height: 100%; scroll-behavior: smooth; }
+html {
+  min-width: 280px;
+  min-height: 100%;
+  scroll-behavior: smooth;
+  /* Kill the browser pull-to-refresh rubber-band that breaks PWA screens. */
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+}
 body {
   min-width: 280px;
   min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
   background: var(--m3-bg);
   color: var(--m3-text);
   font-family: var(--m3-font);
 }
 button, input, select, textarea { font: inherit; color: inherit; }
-button { touch-action: manipulation; }
+
+/* ---------- Native touch physics ---------- */
+button,
+a,
+[role="button"],
+[role="tab"],
+label,
+summary {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Tactile press feedback — subtle, never janky on slow Android devices. */
+button:not(:disabled):active,
+a[href]:active,
+[role="button"]:active,
+[role="tab"]:active {
+  transform: scale(0.97);
+}
+button,
+a,
+[role="button"],
+[role="tab"] {
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1),
+              background-color 160ms cubic-bezier(0.2, 0, 0, 1),
+              color 160ms cubic-bezier(0.2, 0, 0, 1),
+              border-color 160ms cubic-bezier(0.2, 0, 0, 1),
+              opacity 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  button, a, [role="button"], [role="tab"] { transition-duration: 0.01ms !important; }
+}
+
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
 textarea:focus-visible, [tabindex]:focus-visible {
   outline: 3px solid rgba(11, 87, 208, 0.3);
@@ -88,9 +140,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--m3-primary); w
   position: sticky;
   z-index: 70;
   top: 0;
+  padding-top: env(safe-area-inset-top, 0px);
   background: rgba(255, 255, 255, 0.94);
   border-bottom: 1px solid var(--m3-border);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
 }
 .topbar__inner {
   display: flex;
@@ -98,9 +152,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--m3-primary); w
   justify-content: space-between;
   gap: 14px;
   width: min(1240px, 100%);
-  min-height: 72px;
+  min-height: 60px;
   margin-inline: auto;
-  padding: 10px clamp(12px, 3vw, 28px);
+  padding: 8px clamp(12px, 3vw, 28px);
 }
 .topbar__actions {
   display: flex;
@@ -1435,15 +1489,19 @@ input[type="range"].m3-range::-webkit-slider-thumb {
   .wizard-actions { display: none; }
   .mobile-step-actions {
     display: flex; align-items: center; gap: 8px;
-    position: fixed; z-index: 90; inset-inline: 0; bottom: 0;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    position: fixed; z-index: 85; inset-inline: 0;
+    /* Stack directly on top of the native bottom tab bar. */
+    bottom: calc(var(--albasar-tabs-h) + env(safe-area-inset-bottom, 0px));
+    padding: 10px 12px;
     border-top: 1px solid var(--m3-border);
-    background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(16px);
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
     box-shadow: 0 -10px 30px -20px rgba(15, 23, 42, .45);
   }
   .mobile-step-actions .m3-btn { flex: 1 1 0; min-height: 52px; font-size: 13px; }
   .mobile-step-actions .m3-btn--back { flex: 0 0 92px; }
-  .feedback-toast { bottom: 96px; }
+  .feedback-toast { bottom: calc(var(--albasar-tabs-h) + 86px + env(safe-area-inset-bottom, 0px)); }
   .app-footer { display: none; }
   .admin-heading { align-items: flex-start; }
   .admin-view .p-6 { padding: 14px; }
@@ -1709,6 +1767,370 @@ input[type="range"].m3-range::-webkit-slider-thumb {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* =========================================================
+   Native mobile shell · bottom tabs, install banner, biometrics
+   ========================================================= */
+
+/* ---------- Startup gate: dim the blocked workflow ---------- */
+.app-shell.is-gated .app-main,
+.app-shell.is-gated .step-indicator {
+  opacity: .5;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------- Compact account cluster in the top bar ---------- */
+.topbar__account {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-inline-start: 4px;
+}
+.topbar__avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-inline-end: 2px;
+  border-radius: 50%;
+  background: var(--m3-primary);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  box-shadow: 0 2px 6px -2px rgba(11, 87, 208, .65);
+}
+.icon-action--account { color: var(--m3-text-soft); padding: 3px; }
+.icon-action--account.is-open { background: var(--m3-surface-3); color: var(--m3-primary); }
+.icon-action__bio-dot {
+  position: absolute;
+  inset-block-end: -1px;
+  inset-inline-end: -1px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--m3-pass);
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--m3-surface);
+}
+.account-menu {
+  position: absolute;
+  z-index: 95;
+  inset-block-start: calc(100% + 8px);
+  inset-inline-end: 0;
+  min-width: 230px;
+  padding: 8px;
+  border: 1px solid var(--m3-border);
+  border-radius: 18px;
+  background: var(--m3-surface);
+  box-shadow: 0 18px 44px -18px rgba(15, 23, 42, .45);
+  animation: albasar-slide-up 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.account-menu__head {
+  display: grid;
+  gap: 3px;
+  padding: 6px 10px 10px;
+  border-bottom: 1px solid var(--m3-border);
+  margin-bottom: 6px;
+}
+.account-menu__name {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--m3-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu__badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--m3-pass);
+}
+.account-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--m3-text-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-align: right;
+  cursor: pointer;
+}
+.account-menu__item:hover { background: var(--m3-surface-2); color: var(--m3-text); }
+.account-menu__item--danger { color: var(--m3-urgent); }
+.account-menu__item--danger:hover { background: var(--m3-urgent-soft); color: var(--m3-urgent); }
+
+/* ---------- Native bottom tab bar (mobile only) ---------- */
+.bottom-tabs {
+  display: none;
+  position: fixed;
+  z-index: 80;
+  inset-inline: 0;
+  bottom: 0;
+  align-items: stretch;
+  justify-content: space-around;
+  gap: 2px;
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 -6px 24px -14px rgba(15, 23, 42, .35);
+}
+.bottom-tab {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 54px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 3px;
+  padding: 5px 2px 4px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--m3-muted);
+  font-family: inherit;
+  cursor: pointer;
+}
+.bottom-tab__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  border-radius: 999px;
+  color: inherit;
+  transition: background-color 180ms cubic-bezier(0.2, 0, 0, 1), color 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+.bottom-tab__label {
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.bottom-tab.is-active { color: var(--m3-primary); }
+.bottom-tab.is-active .bottom-tab__icon {
+  background: var(--m3-primary);
+  color: #fff;
+  box-shadow: 0 3px 10px -4px rgba(11, 87, 208, .8);
+}
+.bottom-tab.is-done:not(.is-active) { color: var(--m3-pass); }
+.bottom-tab__indicator {
+  position: absolute;
+  top: 1px;
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--m3-primary);
+}
+
+@media (max-width: 768px) {
+  .bottom-tabs { display: flex; }
+  /* Keep every CTA clear of the fixed bottom chrome (tab bar + action row). */
+  .app-main {
+    padding-bottom: calc(var(--albasar-tabs-h) + var(--albasar-mobile-actions-h) + 22px + env(safe-area-inset-bottom, 0px));
+  }
+  .app-footer {
+    padding-bottom: calc(var(--albasar-tabs-h) + var(--albasar-mobile-actions-h) + 22px + env(safe-area-inset-bottom, 0px));
+  }
+  .wizard-bar { padding-bottom: 8px; }
+}
+
+/* ---------- Native install prompt banner ---------- */
+.install-banner {
+  position: fixed;
+  z-index: 90;
+  inset-inline: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  margin-inline: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--m3-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  box-shadow: 0 18px 44px -18px rgba(15, 23, 42, .5);
+  animation: albasar-slide-up 320ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.install-banner__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--m3-primary-soft);
+  color: var(--m3-primary);
+}
+.install-banner__copy { flex: 1 1 auto; min-width: 0; line-height: 1.4; }
+.install-banner__copy strong { display: block; font-size: 12.5px; font-weight: 800; color: var(--m3-text); }
+.install-banner__copy small { display: block; margin-top: 1px; font-size: 10.5px; font-weight: 600; color: var(--m3-muted); }
+.install-banner__actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.install-banner__btn { min-height: 40px; padding: 8px 14px; font-size: 12px; font-weight: 800; }
+.install-banner__ios {
+  display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--m3-surface-2); color: var(--m3-primary);
+}
+.install-banner__close {
+  display: grid; place-items: center;
+  width: 34px; height: 34px;
+  border: 0; border-radius: 10px;
+  background: transparent; color: var(--m3-muted);
+  font-size: 14px; cursor: pointer;
+}
+.install-banner__close:hover { background: var(--m3-surface-2); color: var(--m3-text); }
+
+@media (max-width: 768px) {
+  /* The bottom chrome owns the lower edge — lift the banner above it. */
+  .install-banner {
+    bottom: calc(var(--albasar-tabs-h) + var(--albasar-mobile-actions-h) + 12px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ---------- Biometric unlock (auth gate) ---------- */
+.auth-gate-backdrop {
+  background: rgba(15, 23, 42, .58);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.auth-dialog--gate {
+  width: min(430px, 100%);
+  animation: albasar-sheet-up 340ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.auth-biometric-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 68px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #b9d0f7;
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--m3-primary-soft), #f4f8ff);
+  color: var(--m3-text);
+  font-family: inherit;
+  text-align: right;
+  cursor: pointer;
+  box-shadow: 0 10px 26px -18px rgba(11, 87, 208, .9);
+}
+.auth-biometric-button:hover:not(:disabled) { border-color: var(--m3-primary); }
+.auth-biometric-button:disabled { opacity: .6; cursor: wait; }
+.auth-biometric-button__icon {
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+  width: 46px; height: 46px;
+  border-radius: 14px;
+  background: var(--m3-primary);
+  color: #fff;
+}
+.auth-biometric-button__copy { min-width: 0; line-height: 1.4; }
+.auth-biometric-button__copy strong { display: block; font-size: 14px; font-weight: 800; color: var(--m3-primary-strong); }
+.auth-biometric-button__copy small { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--m3-muted); }
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  color: var(--m3-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--m3-border);
+}
+.auth-biometric-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px dashed var(--m3-border-strong);
+  border-radius: 14px;
+  background: var(--m3-surface-2);
+  color: var(--m3-text-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  text-align: right;
+  cursor: pointer;
+}
+.auth-biometric-toggle:hover:not(:disabled) { background: var(--m3-surface-3); color: var(--m3-text); }
+.auth-biometric-toggle.is-on {
+  border-style: solid;
+  border-color: var(--m3-pass-border);
+  background: var(--m3-pass-soft);
+  color: var(--m3-pass);
+}
+.auth-biometric-toggle:disabled { opacity: .6; cursor: wait; }
+.auth-checkline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--m3-text-soft);
+  cursor: pointer;
+}
+.auth-checkline input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; }
+.auth-input.is-invalid { border-color: var(--m3-urgent); background: var(--m3-urgent-soft); }
+.auth-field__error { color: var(--m3-urgent); font-size: 11.5px; font-weight: 700; }
+.auth-dialog__icon--pass { background: var(--m3-pass-soft); color: var(--m3-pass); }
+
+/* ---------- Sheet / modal animations ---------- */
+@keyframes albasar-sheet-up {
+  from { opacity: 0; transform: translateY(22px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes albasar-slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.feedback-dialog-backdrop { animation: albasar-fade-in 200ms cubic-bezier(0.2, 0, 0, 1) both; }
+.feedback-dialog,
+.auth-dialog,
+.qr-dialog {
+  animation: albasar-sheet-up 300ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes albasar-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feedback-dialog-backdrop,
+  .feedback-dialog,
+  .auth-dialog,
+  .qr-dialog,
+  .install-banner { animation: none !important; }
 }
 
 /* ---------- Cloud auth dialog ---------- */

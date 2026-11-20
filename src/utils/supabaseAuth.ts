@@ -73,6 +73,25 @@ export async function loadCloudAuthUser(): Promise<CloudAuthUser | null> {
   }
 }
 
+/**
+ * Force a token refresh in the background.
+ *
+ * Used by the "keep me signed in" restore path so a silent unlock always ends
+ * up with a fresh Supabase JWT. Returns the refreshed user, or the currently
+ * cached user when the network is unavailable (offline fieldwork keeps working).
+ */
+export async function refreshCloudSession(): Promise<CloudAuthUser | null> {
+  const client = await getClient();
+  if (!client) return null;
+  try {
+    const { data, error } = await client.auth.refreshSession();
+    if (error) return loadCloudAuthUser();
+    return toCloudUser(data.session?.user);
+  } catch {
+    return loadCloudAuthUser();
+  }
+}
+
 /** Sign in with an account provisioned by the project supervisor. */
 export async function signInToCloud(email: string, password: string): Promise<CloudAuthUser> {
   const client = await getClient();

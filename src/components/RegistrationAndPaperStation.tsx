@@ -59,6 +59,10 @@ interface RegistrationProps {
   setReferralPHCC: (val: string) => void;
   onProceedToSmartStation: () => void;
   onGenerateNextId: () => void;
+  /** Notifies the host app when the QR scanner overlay opens/closes (Android back button). */
+  onQRScannerOpenChange?: (open: boolean) => void;
+  /** Incremented by the host app to force-close the scanner (hardware back button). */
+  qrScannerCloseSignal?: number;
 }
 
 interface YesNoPillsProps {
@@ -234,6 +238,8 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
   setReferralPHCC,
   onProceedToSmartStation,
   onGenerateNextId,
+  onQRScannerOpenChange,
+  qrScannerCloseSignal,
 }) => {
   const [timerRunning, setTimerRunning] = useState(false);
   const [startTime, setStartTime] = useState(0);
@@ -243,6 +249,32 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
   const [sessionPanelOpen, setSessionPanelOpen] = useState(
     () => !schoolName || !schoolSector || !examinerId,
   );
+
+  /**
+   * Keeps the host app's hardware-back overlay stack in sync: the Android
+   * back button must close the QR scanner instead of leaving the app.
+   */
+  const openQRScanner = () => {
+    setIsQRScannerOpen(true);
+    onQRScannerOpenChange?.(true);
+  };
+  const closeQRScanner = () => {
+    setIsQRScannerOpen(false);
+    onQRScannerOpenChange?.(false);
+  };
+  useEffect(() => {
+    return () => {
+      if (isQRScannerOpen) onQRScannerOpenChange?.(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isQRScannerOpen]);
+
+  // The host app can force the scanner shut (Android hardware back button).
+  useEffect(() => {
+    if (!qrScannerCloseSignal) return;
+    closeQRScanner();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qrScannerCloseSignal]);
 
   useEffect(() => {
     // Merge with the latest context so a mounted Step 1 never clears the smart
@@ -472,7 +504,7 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
                   <RefreshCw size={15} />
                   كود تلقائي
                 </button>
-                <button type="button" onClick={()=>setIsQRScannerOpen(true)} className="m3-btn m3-btn--primary">
+                <button type="button" onClick={openQRScanner} className="m3-btn m3-btn--primary">
                   <QrCode size={16} />
                   مسح QR
                 </button>
@@ -693,7 +725,7 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
         <WashoutTimer variant="light" />
       </div>
 
-      <QRScannerModal isOpen={isQRScannerOpen} onClose={()=>setIsQRScannerOpen(false)} onScanSuccess={handleQRScanSuccess} />
+      <QRScannerModal isOpen={isQRScannerOpen} onClose={closeQRScanner} onScanSuccess={handleQRScanSuccess} />
     </div>
   );
 };

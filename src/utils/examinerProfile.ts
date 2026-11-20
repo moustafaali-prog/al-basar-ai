@@ -12,6 +12,8 @@
 export const DEVICE_ID_KEY = 'albasar_device_id';
 export const EXAMINER_PROFILE_KEY = 'albasar_examiner_profile_v3';
 export const LOCAL_ACCOUNTS_KEY = 'albasar_local_accounts_v3';
+/** Explicit "lock this app" marker — cleared by a successful unlock. */
+export const SESSION_LOCKED_KEY = 'albasar_session_locked_v1';
 
 export interface ExaminerProfile {
   /** Full triple name, e.g. "أحمد محمد علي". */
@@ -19,6 +21,10 @@ export interface ExaminerProfile {
   email: string;
   /** Stable per-device identifier used to attribute every screening record. */
   deviceId: string;
+  /** Cloud account id (absent for purely local accounts). */
+  userId: string;
+  /** "Keep me signed in on this device" — drives silent session restore. */
+  rememberMe: boolean;
   savedAt: string;
 }
 
@@ -80,6 +86,8 @@ export const loadExaminerProfile = (): ExaminerProfile | null => {
       deviceId: typeof parsed.deviceId === 'string' && parsed.deviceId.trim()
         ? parsed.deviceId.trim()
         : getOrCreateDeviceId(),
+      userId: typeof parsed.userId === 'string' ? parsed.userId.trim() : '',
+      rememberMe: parsed.rememberMe !== false,
       savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : '',
     };
   } catch {
@@ -89,12 +97,21 @@ export const loadExaminerProfile = (): ExaminerProfile | null => {
 
 /** Persist the examiner profile. No password is accepted or stored. */
 export const saveExaminerProfile = (
-  profile: { fullName: string; email: string; deviceId?: string },
+  profile: {
+    fullName: string;
+    email: string;
+    deviceId?: string;
+    userId?: string;
+    rememberMe?: boolean;
+  },
 ): ExaminerProfile => {
+  const previous = loadExaminerProfile();
   const saved: ExaminerProfile = {
     fullName: profile.fullName.trim(),
     email: profile.email.trim(),
     deviceId: profile.deviceId?.trim() || getOrCreateDeviceId(),
+    userId: profile.userId?.trim() ?? previous?.userId ?? '',
+    rememberMe: profile.rememberMe ?? previous?.rememberMe ?? true,
     savedAt: new Date().toISOString(),
   };
   safeSet(EXAMINER_PROFILE_KEY, JSON.stringify(saved));
@@ -104,6 +121,29 @@ export const saveExaminerProfile = (
 /** Remove the local profile (used by the one-tap sign-out). */
 export const clearExaminerProfile = (): void => {
   safeRemove(EXAMINER_PROFILE_KEY);
+};
+
+/**
+ * Persists the examiner's "keep me signed in" preference without touching the
+ * rest of the profile (used by the auth screen checkbox).
+ */
+export const setRememberMe = (rememberMe: boolean): void => {
+  const profile = loadExaminerProfile();
+  if (!profile) return;
+  safeSet(EXAMINER_PROFILE_KEY, JSON.stringify({ ...profile, rememberMe }));
+};
+
+/* ------------------------------------------------------------------ *
+ * Session lock
+ * ------------------------------------------------------------------ */
+
+/** True when the examiner explicitly locked the app on this device. */
+export const isSessionLocked = (): boolean => safeGet(SESSION_LOCKED_KEY) === '1';
+
+/** Marks the app as locked (the gate is shown on the next launch). */
+export const setSessionLocked = (locked: boolean): void => {
+  if (locked) safeSet(SESSION_LOCKED_KEY, '1');
+  else safeRemove(SESSION_LOCKED_KEY);
 };
 
 /** Normalised username derived from the triple name, e.g. "أحمد محمد علي" -> "أحمد". */

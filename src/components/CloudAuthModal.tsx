@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Eye,
   EyeOff,
+  Fingerprint,
   LockKeyhole,
   LogIn,
   Mail,
@@ -16,13 +17,27 @@ import type { CloudAuthUser } from '../utils/supabaseAuth';
 import {
   findLocalAccount,
   getOrCreateDeviceId,
+  loadExaminerProfile,
   registerLocalAccount,
   saveExaminerProfile,
+  setRememberMe,
 } from '../utils/examinerProfile';
+import {
+  clearBiometricCredential,
+  getBiometricBinding,
+  isBiometricAvailable,
+  registerBiometricCredential,
+  verifyBiometricUnlock,
+} from '../utils/biometricAuth';
 
 interface CloudAuthModalProps {
   isOpen: boolean;
   isOnline: boolean;
+  /**
+   * Startup-gate mode: the screen blocks the workflow until the examiner
+   * signs in, unlocks with a biometric, or explicitly continues offline.
+   */
+  isGate?: boolean;
   /** Dismiss the modal and keep working fully offline. */
   onClose: () => void;
   /** Fired for server-backed AND locally persisted accounts. */
@@ -72,6 +87,7 @@ const friendlyAuthError = (error: unknown): string => {
 export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   isOpen,
   isOnline,
+  isGate = false,
   onClose,
   onSignedIn,
 }) => {
@@ -85,7 +101,17 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
+  /** "Keep me signed in on this device" — on by default. */
+  const [rememberMe, setRememberMeState] = useState(true);
+  /** Opt-in toggle shown after a successful sign-in. */
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricPrompting, setBiometricPrompting] = useState(false);
+  const [biometricBinding, setBiometricBinding] = useState(() => getBiometricBinding());
+  /** Set after a successful sign-in so the screen can offer biometric enrolment. */
+  const [postSignInUser, setPostSignInUser] = useState<CloudAuthUser | null>(null);
   const identifierRef = useRef<HTMLInputElement>(null);
+  const confirmPasswordRef = useRef<HTMLInputElement>(null);
 
   // Keep the latest close handler and busy flag in refs so the open/close
   // effect below only runs when the modal actually opens. Otherwise an inline
@@ -95,6 +121,17 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
   const submittingRef = useRef(submitting);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => { submittingRef.current = submitting; }, [submitting]);
+
+  // Detect the platform authenticator once, when the screen opens.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setBiometricBinding(getBiometricBinding());
+    void isBiometricAvailable().then((available) => {
+      if (!cancelled) setBiometricAvailable(available);
+    });
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -107,6 +144,8 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setSubmitting(false);
     setPassword('');
     setConfirmPassword('');
+    setBiometricEnabled(false);
+    setPostSignInUser(null);
     const timer = window.setTimeout(() => identifierRef.current?.focus(), 60);
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -120,6 +159,12 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     };
   }, [isOpen]);
 
+  /** Live confirmation-password match indicator. */
+  const passwordMismatch = useMemo(
+    () => mode === 'signup' && confirmPassword.length > 0 && confirmPassword !== password,
+    [mode, confirmPassword, password],
+  );
+
   if (!isOpen) return null;
 
   const switchMode = (nextMode: CloudAuthMode) => {
@@ -129,14 +174,77 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     setInfoMessage('');
     setPassword('');
     setConfirmPassword('');
+    setBiometricEnabled(false);
   };
 
   /** Persist the identity locally so the examiner is never blocked. */
-  const persistLocalIdentity = (name: string, email: string): CloudAuthUser => {
+  const persistLocalIdentity = (
+    name: string,
+    email: string,
+    userId = '',
+  ): CloudAuthUser => {
     const deviceId = getOrCreateDeviceId();
-    saveExaminerProfile({ fullName: name, email, deviceId });
+    saveExaminerProfile({ fullName: name, email, deviceId, userId, rememberMe });
     if (email) registerLocalAccount({ fullName: name, email });
-    return { id: `local-${deviceId}`, email: email || null, fullName: name || null };
+    return { id: userId || `local-${deviceId}`, email: email || null, fullName: name || null };
+  };
+
+  /**
+   * Enrols the device's fingerprint / Face ID for one-tap unlocking.
+   * The OS prompt is the only thing that can produce the credential.
+   */
+  const enableBiometric = async (user: CloudAuthUser) => {
+    setBiometricPrompting(true);
+    setErrorMessage('');
+    try {
+      const ok = await registerBiometricCredential(
+        user.id || user.email || 'albasar-examiner',
+        user.fullName || user.email || 'فاحص',
+      );
+      if (ok) {
+        setBiometricBinding(getBiometricBinding());
+        setBiometricEnabled(true);
+        setInfoMessage('✅ تم تفعيل الدخول بالبصمة على هذا الجهاز.');
+      } else {
+        setBiometricEnabled(false);
+        setInfoMessage('تعذّر تفعيل البصمة على هذا الجهاز — يمكنك المحاولة لاحقاً من إعدادات الحساب.');
+      }
+    } finally {
+      setBiometricPrompting(false);
+    }
+  };
+
+  /**
+   * One-tap biometric unlock. Works completely offline because the assertion is
+   * produced by the device's own secure hardware.
+   */
+  const handleBiometricUnlock = async () => {
+    if (biometricPrompting) return;
+    setBiometricPrompting(true);
+    setErrorMessage('');
+    setInfoMessage('');
+    try {
+      const verified = await verifyBiometricUnlock();
+      if (!verified) {
+        setErrorMessage('⚠️ لم يتم تأكيد البصمة. حاول مرة أخرى أو سجّل الدخول بالرمز السري.');
+        return;
+      }
+      const binding = getBiometricBinding();
+      const stored = loadExaminerProfile();
+      const fullName = binding?.displayName?.trim() || stored?.fullName?.trim() || '';
+      const email = stored?.email?.trim() || '';
+      const user: CloudAuthUser = {
+        id: binding?.userId || stored?.userId || `local-${getOrCreateDeviceId()}`,
+        email: email || null,
+        fullName: fullName || null,
+      };
+      persistLocalIdentity(fullName, user.email ?? '', user.id);
+      onSignedIn(user);
+      // The biometric is already enrolled — no enrolment panel needed.
+      onClose();
+    } finally {
+      setBiometricPrompting(false);
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -176,7 +284,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
 
     // Sign-in accepts the email or a username known on this device.
     const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedIdentifier);
-    const localAccount = looksLikeEmail ? null : findLocalAccount(trimmedIdentifier);
+    const localAccount = findLocalAccount(trimmedIdentifier);
     const resolvedEmail = looksLikeEmail
       ? trimmedIdentifier
       : localAccount?.email ?? trimmedIdentifier;
@@ -189,10 +297,10 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
           resolvedEmail,
         );
         setInfoMessage('✅ حُفظت بياناتك على هذا الجهاز. المزامنة السحابية عند عودة الشبكة.');
+        setPostSignInUser(localUser);
         onSignedIn(localUser);
         return;
       }
-
       const { signInToCloud, signUpToCloud } = await import('../utils/supabaseAuth');
 
       if (mode === 'signup') {
@@ -206,21 +314,26 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
         }
         // The account exists on the server; the local identity is persisted
         // immediately so a pending email confirmation never blocks fieldwork.
-        const localUser = persistLocalIdentity(trimmedName, trimmedIdentifier);
+        const localUser = persistLocalIdentity(trimmedName, trimmedIdentifier, result.user?.id ?? '');
         if (result.needsEmailConfirmation || !result.user) {
           setInfoMessage('✅ تم إنشاء الحساب. سيُفعّل المزامنة بعد تأكيد البريد الإلكتروني.');
+          setPostSignInUser({ ...localUser, id: result.user?.id ?? localUser.id });
           onSignedIn({ ...localUser, id: result.user?.id ?? localUser.id });
           return;
         }
-        onSignedIn({ ...result.user, fullName: result.user.fullName ?? trimmedName });
+        const signedIn: CloudAuthUser = { ...result.user, fullName: result.user.fullName ?? trimmedName };
+        setPostSignInUser(signedIn);
+        onSignedIn(signedIn);
         return;
       }
 
       const user = await signInToCloud(resolvedEmail, password);
       setPassword('');
       const name = user.fullName?.trim() || localAccount?.fullName || trimmedName;
-      persistLocalIdentity(name, user.email ?? resolvedEmail);
-      onSignedIn({ ...user, fullName: name || null });
+      persistLocalIdentity(name, user.email ?? resolvedEmail, user.id);
+      const signedIn = { ...user, fullName: name || null };
+      setPostSignInUser(signedIn);
+      onSignedIn(signedIn);
     } catch (error) {
       setErrorMessage(friendlyAuthError(error));
     } finally {
@@ -228,17 +341,109 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
     }
   };
 
-  const submitLabel = mode === 'signup' ? 'تأكيد وإنشاء الحساب' : 'دخول';
+  /** Keeps the "remember me" preference in sync with the checkbox. */
+  const handleRememberMeChange = (next: boolean) => {
+    setRememberMeState(next);
+    setRememberMe(next);
+  };
+
+  const submitLabel = mode === 'signup' ? 'إنشاء الحساب والدخول' : 'دخول';
+  const hasBinding = Boolean(biometricBinding);
+
+  /* ---------------- Post sign-in: biometric enrolment ---------------- */
+  if (postSignInUser) {
+    return (
+      <div
+        className={`feedback-dialog-backdrop auth-gate-backdrop${isGate ? ' is-gate' : ''}`}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !submitting) onClose();
+        }}
+      >
+        <section
+          className="auth-dialog auth-dialog--minimal auth-dialog--gate"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cloud-auth-success"
+        >
+          <header className="auth-dialog__header">
+            <div className="auth-dialog__heading">
+              <span className="auth-dialog__icon auth-dialog__icon--pass" aria-hidden="true">
+                <ShieldCheck size={20} />
+              </span>
+              <div className="auth-dialog__titles">
+                <h2 id="cloud-auth-success">تم تسجيل الدخول</h2>
+                <p>{postSignInUser.fullName || postSignInUser.email || 'حساب الفاحص'}</p>
+              </div>
+            </div>
+          </header>
+
+          <div className="auth-dialog__body">
+            <p className="auth-dialog__info" role="status">
+              ✅ الجلسة جاهزة. يمكنك الآن تفعيل الدخول بالبصمة لتسريع الفتح في الزيارات القادمة.
+            </p>
+
+            {biometricAvailable ? (
+              <button
+                type="button"
+                className={`auth-biometric-toggle${biometricEnabled ? ' is-on' : ''}`}
+                onClick={() => {
+                  if (biometricEnabled) {
+                    clearBiometricCredential();
+                    setBiometricBinding(null);
+                    setBiometricEnabled(false);
+                    setInfoMessage('تم إلغاء ربط البصمة من هذا الجهاز.');
+                    return;
+                  }
+                  void enableBiometric(postSignInUser);
+                }}
+                disabled={biometricPrompting}
+                aria-pressed={biometricEnabled}
+              >
+                <Fingerprint size={17} aria-hidden="true" />
+                <span>
+                  {biometricPrompting
+                    ? 'جارٍ انتظار تأكيد الجهاز…'
+                    : biometricEnabled
+                      ? '🔐 البصمة مفعّلة على هذا الجهاز (اضغط للإلغاء)'
+                      : '🔐 تفعيل الدخول بالبصمة على هذا الجهاز'}
+                </span>
+              </button>
+            ) : (
+              <p className="auth-dialog__hint">
+                هذا الجهاز لا يدعم البصمة — سيُحفظ تسجيل الدخول بالرمز السري فقط.
+              </p>
+            )}
+
+            {infoMessage && (
+              <p className="auth-dialog__info" role="status">
+                {infoMessage}
+              </p>
+            )}
+
+            <button
+              type="button"
+              className="m3-btn m3-btn--primary m3-btn--block auth-dialog__submit"
+              onClick={onClose}
+              disabled={submitting || biometricPrompting}
+            >
+              <LogIn size={18} aria-hidden="true" />
+              <span>متابعة إلى الفحص</span>
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div
-      className="feedback-dialog-backdrop"
+      className={`feedback-dialog-backdrop auth-gate-backdrop${isGate ? ' is-gate' : ''}`}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !submitting) onClose();
+        if (event.target === event.currentTarget && !submitting && !isGate) onClose();
       }}
     >
       <section
-        className="auth-dialog auth-dialog--minimal"
+        className={`auth-dialog auth-dialog--minimal${isGate ? ' auth-dialog--gate' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="cloud-auth-title"
@@ -249,20 +454,52 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
               <ShieldCheck size={20} />
             </span>
             <div className="auth-dialog__titles">
-              <h2 id="cloud-auth-title">حساب الفاحص</h2>
+              <h2 id="cloud-auth-title">
+                {isGate ? 'تسجيل الدخول' : 'حساب الفاحص'}
+              </h2>
+              <p>
+                {isGate
+                  ? 'افتح جلسة الفحص الخاصة بك على هذا الجهاز.'
+                  : 'اربط حسابك بالمشرف لمزامنة السجلات.'}
+              </p>
             </div>
           </div>
+          {!isGate && (
+            <button
+              type="button"
+              className="icon-action shrink-0"
+              onClick={onClose}
+              disabled={submitting}
+              aria-label="متابعة بدون تسجيل دخول"
+              title="متابعة بدون تسجيل دخول"
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          )}
+        </header>
+
+        {/* ---- One-tap biometric unlock (top of the screen) ---- */}
+        {hasBinding && (
           <button
             type="button"
-            className="icon-action shrink-0"
-            onClick={onClose}
-            disabled={submitting}
-            aria-label="متابعة بدون تسجيل دخول"
-            title="متابعة بدون تسجيل دخول"
+            className="auth-biometric-button"
+            onClick={() => void handleBiometricUnlock()}
+            disabled={submitting || biometricPrompting}
+            aria-busy={biometricPrompting}
           >
-            <X size={18} aria-hidden="true" />
+            <span className="auth-biometric-button__icon" aria-hidden="true">
+              {biometricPrompting
+                ? <RefreshCw size={22} className="spin" />
+                : <Fingerprint size={22} />}
+            </span>
+            <span className="auth-biometric-button__copy">
+              <strong>👆 تسجيل الدخول بالبصمة</strong>
+              <small>افتح قفل الجهاز ببصمة الإصبع أو الوجه — يعمل بدون إنترنت</small>
+            </span>
           </button>
-        </header>
+        )}
+
+        {hasBinding && <div className="auth-divider"><span>أو</span></div>}
 
         <form className="auth-dialog__body" onSubmit={handleSubmit} noValidate>
           <div className="auth-tabs" role="tablist" aria-label="تسجيل الدخول أو إنشاء حساب">
@@ -293,7 +530,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
                 <UserRound size={17} aria-hidden="true" />
                 <input
                   type="text"
-                  name="full_name"
+                  name="name"
                   value={fullName}
                   onChange={(event) => setFullName(event.target.value)}
                   placeholder="أحمد محمد علي"
@@ -312,11 +549,11 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
               <input
                 ref={identifierRef}
                 type={mode === 'signup' ? 'email' : 'text'}
-                name="email"
+                name={mode === 'signup' ? 'email' : 'username'}
                 value={identifier}
                 onChange={(event) => setIdentifier(event.target.value)}
                 placeholder="examiner@example.org"
-                autoComplete="username"
+                autoComplete={mode === 'signup' ? 'email' : 'username'}
                 dir="ltr"
                 inputMode="email"
                 disabled={submitting}
@@ -336,6 +573,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="••••••••"
                 autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                minLength={mode === 'signup' ? 6 : undefined}
                 dir="ltr"
                 disabled={submitting}
                 required
@@ -356,9 +594,10 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
           {mode === 'signup' && (
             <label className="auth-field">
               <span>تأكيد الرمز السري</span>
-              <span className="auth-input">
+              <span className={`auth-input${passwordMismatch ? ' is-invalid' : ''}`}>
                 <LockKeyhole size={17} aria-hidden="true" />
                 <input
+                  ref={confirmPasswordRef}
                   type={showConfirmPassword ? 'text' : 'password'}
                   name="confirm_password"
                   value={confirmPassword}
@@ -380,6 +619,22 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
                   {showConfirmPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
                 </button>
               </span>
+              {passwordMismatch && (
+                <small className="auth-field__error" role="alert">الرمزان غير متطابقين</small>
+              )}
+            </label>
+          )}
+
+          {mode === 'signin' && (
+            <label className="auth-checkline">
+              <input
+                type="checkbox"
+                name="remember_me"
+                checked={rememberMe}
+                onChange={(event) => handleRememberMeChange(event.target.checked)}
+                disabled={submitting}
+              />
+              <span>البقاء مسجلاً على هذا الجهاز</span>
             </label>
           )}
 
@@ -418,7 +673,7 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
           onClick={onClose}
           disabled={submitting}
         >
-          متابعة بدون تسجيل دخول
+          {isGate ? 'المتابعة محلياً بدون حساب' : 'متابعة بدون تسجيل دخول'}
         </button>
       </section>
     </div>

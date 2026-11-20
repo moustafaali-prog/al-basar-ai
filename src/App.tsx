@@ -3,18 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   Camera,
+  Check,
   ChevronLeft,
   ChevronRight,
   Eye,
-  GraduationCap,
+  Fingerprint,
+  Lock,
   LogIn,
   LogOut,
   RefreshCw,
   Settings,
+  Share,
+  Smartphone,
   Sparkles,
   UserCheck,
 } from 'lucide-react';
@@ -58,16 +62,24 @@ import { InteractiveStudentTrainingModal } from './components/InteractiveStudent
 import { useFeedback } from './components/FeedbackProvider';
 import { isSupabaseConfigured } from './utils/supabaseConfig';
 import { CloudAuthModal } from './components/CloudAuthModal';
+import { AdminPinGate } from './components/AdminPinGate';
 import { CloudSettingsPanel } from './components/CloudSettingsPanel';
 import type { CloudAuthUser } from './utils/supabaseAuth';
 import {
   clearExaminerProfile,
   getOrCreateDeviceId,
+  isSessionLocked,
   loadExaminerProfile,
   saveExaminerProfile,
-  shortDisplayName,
+  setSessionLocked,
   type ExaminerProfile,
 } from './utils/examinerProfile';
+import {
+  getBiometricBinding,
+  hasBiometricCredential,
+} from './utils/biometricAuth';
+import { useInstallPrompt } from './utils/useInstallPrompt';
+import { useHardwareBackButton } from './utils/useHardwareBackButton';
 
 type ClinicalStepId = 'protocol' | 'acuity' | 'biometry' | 'cdss';
 type ActiveTab = ClinicalStepId;
@@ -78,6 +90,7 @@ const CLINICAL_STEPS = [
     id: 'protocol',
     num: 1,
     label: 'التلميذ',
+    tabLabel: 'تسجيل',
     meta: 'التعريف والموافقة',
     description: 'سجّل هوية التلميذ وموافقة ولي الأمر.',
     icon: UserCheck,
@@ -86,6 +99,7 @@ const CLINICAL_STEPS = [
     id: 'acuity',
     num: 2,
     label: 'النظر',
+    tabLabel: 'البصر',
     meta: 'لوحة العينين',
     description: 'اعرض الرموز وسجّل استجابة كل عين.',
     icon: Eye,
@@ -94,6 +108,7 @@ const CLINICAL_STEPS = [
     id: 'biometry',
     num: 3,
     label: 'صورة العين',
+    tabLabel: 'الكاميرا',
     meta: 'المنعكس والجفن',
     description: 'التقط صورة العينين وراجع المحاذاة.',
     icon: Camera,
@@ -102,6 +117,7 @@ const CLINICAL_STEPS = [
     id: 'cdss',
     num: 4,
     label: 'النتيجة',
+    tabLabel: 'النتيجة',
     meta: 'الإحالة والبطاقة',
     description: 'راجع النتيجة وسلّم الإرشادات ثم احفظ.',
     icon: Activity,
@@ -130,6 +146,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('protocol');
   const [lastClinicalTab, setLastClinicalTab] = useState<ClinicalStepId>('protocol');
   const [adminOpen, setAdminOpen] = useState(false);
+  const [adminPinOpen, setAdminPinOpen] = useState(false);
+  const [qrScannerOpen, setQrScannerOpen] = useState(false);
+  const [qrScannerCloseSignal, setQrScannerCloseSignal] = useState(0);
+  /** Compact account popover (lock / sign-out) in the top bar. */
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [adminPanel, setAdminPanel] = useState<'calib'|'database'|'sus'|'method'|'training'|'cloud'>('calib');
 
   // Methodology Modal State
@@ -239,12 +260,66 @@ export default function App() {
   // Cloud auth is optional: local screening always works, cloud sync is opt-in.
   const [cloudUser, setCloudUser] = useState<CloudAuthUser | null>(null);
   const [cloudLoginOpen, setCloudLoginOpen] = useState<boolean>(false);
+  /** True while the startup authentication gate is blocking the workflow. */
+  const [authGateMode, setAuthGateMode] = useState<boolean>(false);
+  /** True once the local session is unlocked (signed in, restored, or offline). */
+  const [sessionActive, setSessionActive] = useState<boolean>(false);
   /** True once the lazy auth bootstrap has finished (or Supabase is absent). */
   const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
   /** Locally persisted examiner identity (never contains a password). */
   const [examinerProfile, setExaminerProfile] = useState<ExaminerProfile | null>(() => loadExaminerProfile());
+  /** True when this device has a biometric credential bound to an examiner. */
+  const [biometricBound, setBiometricBound] = useState<boolean>(() => hasBiometricCredential());
   /** Records waiting for the next cloud sync. */
   const pendingSyncCount = records.filter((record) => record._syncStatus !== 'synced').length;
+
+  /* ---------------- Native PWA install experience ---------------- */
+  const installPrompt = useInstallPrompt();
+
+  /* ---------------- Hardware back button (Android) ---------------- */
+  const closeOverlayFromBack = useCallback((id: string) => {
+    if (id === 'auth') { setCloudLoginOpen(false); setAuthGateMode(false); setSessionActive(true); return; }
+    if (id === 'admin') { setAdminOpen(false); return; }
+    if (id === 'admin-pin') { setAdminPinOpen(false); return; }
+    if (id === 'training') { setIsTrainingOpen(false); return; }
+    if (id === 'methodology') { setIsMethodologyOpen(false); return; }
+    if (id === 'qr-scanner') {
+      setQrScannerOpen(false);
+      setQrScannerCloseSignal((n) => n + 1);
+      return;
+    }
+  }, []);
+
+  const backButton = useHardwareBackButton(closeOverlayFromBack);
+  /** Overlay ids that were open on the previous render (history bookkeeping). */
+  const previousOverlaysRef = useRef<string[]>([]);
+
+  /**
+   * Keep the browser history in sync with the open overlays so the Android
+   * hardware back button closes the top-most sheet instead of leaving the app.
+   */
+  useEffect(() => {
+    const overlays: Array<[string, boolean]> = [
+      ['auth', cloudLoginOpen],
+      ['admin-pin', adminPinOpen],
+      ['admin', adminOpen],
+      ['training', isTrainingOpen],
+      ['methodology', isMethodologyOpen],
+      ['qr-scanner', qrScannerOpen],
+    ];
+    const openIds = overlays.filter(([, isOpen]) => isOpen).map(([id]) => id);
+    const previous = previousOverlaysRef.current;
+    previousOverlaysRef.current = openIds;
+
+    // Register newly opened overlays.
+    openIds.forEach((id) => {
+      if (!previous.includes(id)) backButton.registerOpen(id);
+    });
+    // Unregister overlays that closed themselves.
+    previous.forEach((id) => {
+      if (!openIds.includes(id)) backButton.registerClose(id);
+    });
+  }, [cloudLoginOpen, adminPinOpen, adminOpen, isTrainingOpen, isMethodologyOpen, qrScannerOpen, backButton]);
 
   useEffect(() => {
     const updateOnline = () => setIsOnline(navigator.onLine);
@@ -255,6 +330,25 @@ export default function App() {
       window.removeEventListener('offline', updateOnline);
     };
   }, []);
+
+  // Dismiss the compact account popover on an outside click or Escape.
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.topbar__account')) return;
+      setAccountMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAccountMenuOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [accountMenuOpen]);
 
   // Auto-sync pending records when coming online and authenticated
   useEffect(() => {
@@ -279,14 +373,26 @@ export default function App() {
     let unsubscribe: (() => void) | undefined;
     const timer = window.setTimeout(async () => {
       try {
-        const { loadCloudAuthUser, subscribeToCloudAuth } = await import('./utils/supabaseAuth');
+        const { loadCloudAuthUser, refreshCloudSession, subscribeToCloudAuth } = await import('./utils/supabaseAuth');
         const user = await loadCloudAuthUser();
         if (cancelled) return;
         setCloudUser(user);
         unsubscribe = await subscribeToCloudAuth((u) => {
           if (!cancelled) setCloudUser(u);
         });
-        if (cancelled) unsubscribe?.();
+
+        // "Keep me signed in" restore: silently refresh the Supabase JWT in the
+        // background so the restored session is never stale. A failure is
+        // non-fatal — the local session keeps working offline.
+        const profile = loadExaminerProfile();
+        if (user && profile?.rememberMe && !isSessionLocked()) {
+          try {
+            const refreshed = await refreshCloudSession();
+            if (!cancelled && refreshed) setCloudUser(refreshed);
+          } catch {
+            // keep the cached session
+          }
+        }
       } catch {
         // Offline-first: ignore cloud session restoration errors.
       } finally {
@@ -305,15 +411,50 @@ export default function App() {
   }, [activeTab]);
 
   /**
-   * First launch: offer the minimal account modal once, and only when the
-   * device has no saved examiner profile. Closing it keeps the workflow fully
-   * offline — the app never blocks a school morning on authentication.
+   * Startup gate.
+   *
+   * The app is usable in three ways, in priority order:
+   *  1. **Silent restore** — the examiner enabled "keep me signed in", the
+   *     device was not locked, and a cloud session still exists. The JWT is
+   *     refreshed in the background and the examiner lands straight in the
+   *     workflow.
+   *  2. **Biometric unlock** — the examiner locked the app or signed out and
+   *     a fingerprint / Face ID credential is bound to this device. The gate
+   *     shows a prominent one-tap unlock that also works fully offline.
+   *  3. **Explicit sign-in** — everything else.
+   *
+   * In every case a visible "continue locally" escape hatch keeps emergency
+   * offline screening unblocked.
    */
   useEffect(() => {
     const profile = loadExaminerProfile();
     setExaminerProfile(profile);
-    if (profile) return;
-    const timer = window.setTimeout(() => setCloudLoginOpen(true), 600);
+    setBiometricBound(hasBiometricCredential());
+
+    const locked = isSessionLocked();
+    const canRestore = Boolean(profile?.rememberMe) && !locked;
+
+    if (canRestore && profile) {
+      // Restore the local session immediately — the cloud JWT refresh happens
+      // in the background and never blocks the first paint.
+      setSessionActive(true);
+      setCloudUser({
+        id: profile.userId || `local-${profile.deviceId}`,
+        email: profile.email || null,
+        fullName: profile.fullName || null,
+      });
+      if (profile.fullName) {
+        setExaminerId((current) => (current.trim() ? current : profile.fullName));
+      }
+      return;
+    }
+
+    // No restorable session — show the gate (biometric button first when a
+    // credential is bound to this device).
+    const timer = window.setTimeout(() => {
+      setAuthGateMode(true);
+      setCloudLoginOpen(true);
+    }, 420);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -546,12 +687,14 @@ export default function App() {
   };
 
   const openCloudLogin = () => {
+    setAuthGateMode(false);
     setCloudLoginOpen(true);
   };
 
   const handleCloudSignedIn = (user: CloudAuthUser) => {
     setCloudUser(user);
-    setCloudLoginOpen(false);
+    setSessionActive(true);
+    setSessionLocked(false);
     const fullName = user.fullName?.trim();
     const email = user.email?.trim() ?? '';
     // The modal already persisted the identity (full name + device); reuse it
@@ -563,6 +706,7 @@ export default function App() {
       deviceId: examinerProfile?.deviceId,
     });
     setExaminerProfile(profile);
+    setBiometricBound(hasBiometricCredential());
     if (profile.fullName) {
       setExaminerId((current) => (current.trim() ? current : profile.fullName));
     }
@@ -571,12 +715,39 @@ export default function App() {
 
   const handleCloseCloudLogin = () => {
     setCloudLoginOpen(false);
+    setAuthGateMode(false);
+    // Leaving the gate without signing in must never block the offline
+    // workflow — the examiner keeps screening locally.
+    setSessionActive(true);
+  };
+
+  /** Locks the app on this device; the gate returns with the biometric button. */
+  const handleLockApp = async () => {
+    const binding = getBiometricBinding();
+    const accepted = await confirmAction({
+      title: 'قفل التطبيق على هذا الجهاز؟',
+      message: binding
+        ? 'يمكنك فتحه لاحقاً ببصمة الإصبع أو الوجه — بدون إنترنت. تبقى السجلات محفوظة محلياً.'
+        : 'سيلزم إدخال البريد الإلكتروني والرمز السري عند فتح التطبيق. تبقى السجلات محفوظة محلياً.',
+      confirmLabel: 'قفل التطبيق',
+    });
+    if (!accepted) return;
+    setSessionLocked(true);
+    setSessionActive(false);
+    setCloudLoginOpen(false);
+    setAuthGateMode(true);
+    // Re-open the gate so the biometric button is immediately reachable.
+    window.setTimeout(() => setCloudLoginOpen(true), 60);
+    notify('تم قفل التطبيق. افتحه بالبصمة أو بالرمز السري.', 'info');
   };
 
   const handleCloudSignOut = async () => {
+    const binding = getBiometricBinding();
     const accepted = await confirmAction({
       title: 'تسجيل الخروج من السحابة؟',
-      message: 'ستبقى جميع السجلات محفوظة محلياً على هذا الجهاز. المزامنة السحابية تتطلب تسجيل الدخول مرة أخرى.',
+      message: binding
+        ? 'ستبقى جميع السجلات محفوظة محلياً على هذا الجهاز، ويمكنك فتح التطبيق لاحقاً بالبصمة — أو بحسابك عند عودة الشبكة.'
+        : 'ستبقى جميع السجلات محفوظة محلياً على هذا الجهاز. المزامنة السحابية تتطلب تسجيل الدخول مرة أخرى.',
       confirmLabel: 'تسجيل الخروج',
     });
     if (!accepted) return;
@@ -587,8 +758,27 @@ export default function App() {
       // حتى إذا فشل طلب الشبكة، نُمسح الجلسة محلياً
     }
     setCloudUser(null);
-    clearExaminerProfile();
-    setExaminerProfile(null);
+    // The local identity (name / email / device) is NOT a credential — it is
+    // kept so the biometric quick-unlock can restore the full profile offline.
+    // Only the silent "remember me" restore is switched off.
+    const current = loadExaminerProfile();
+    if (current) {
+      const kept = saveExaminerProfile({
+        fullName: current.fullName,
+        email: current.email,
+        deviceId: current.deviceId,
+        userId: current.userId,
+        rememberMe: false,
+      });
+      setExaminerProfile(kept);
+    } else {
+      clearExaminerProfile();
+      setExaminerProfile(null);
+    }
+    setSessionLocked(true);
+    setSessionActive(false);
+    setAuthGateMode(true);
+    setCloudLoginOpen(true);
     notify('تم تسجيل الخروج. الفحص المحلي مستمر.', 'info');
   };
 
@@ -863,6 +1053,14 @@ export default function App() {
     setActiveTab(tabId);
   };
 
+  /** Native-app feel: every step change starts the reader at the top. */
+  useEffect(() => {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const behavior: ScrollBehavior = reduceMotion ? 'auto' : 'smooth';
+    window.scrollTo({ top: 0, behavior });
+    document.getElementById('main-content')?.scrollIntoView({ block: 'start', behavior });
+  }, [activeTab]);
+
   const proceedFromRegistration = () => {
     if (!registrationReady) {
       notify('أكمل الموافقة وبيانات المشارك والتسلسل المحدد قبل بدء المحطة الأولى.', 'error');
@@ -890,6 +1088,15 @@ export default function App() {
     biometry: hirschbergRecorded && mrd1Recorded,
     cdss: false,
   };
+
+  /** Two-letter monogram for the compact account avatar (e.g. "أم"). */
+  const examinerInitials = (() => {
+    const source = examinerProfile?.fullName?.trim() || examinerProfile?.email?.trim() || '';
+    if (!source) return '؟';
+    const parts = source.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`;
+    return source.slice(0, 2);
+  })();
 
   const canGoBack = isClinicalView && activeClinicalIndex > 0;
   const stepNextDisabled =
@@ -1053,43 +1260,37 @@ export default function App() {
     };
   })();
 
+  const gateActive = authGateMode && cloudLoginOpen;
+
   return (
-    <div className="app-shell" dir="rtl">
+    <div
+      className={`app-shell${gateActive ? ' is-gated' : ''}`}
+      dir="rtl"
+      data-session={sessionActive ? 'active' : 'locked'}
+    >
       <a href="#main-content" className="skip-link">تخطي إلى محتوى المحطة</a>
 
       <header className="topbar">
         <div className="topbar__inner" dir="rtl">
           <div className="brand">
-            <div className="brand__mark"><Eye size={23} aria-hidden="true" /></div>
+            <div className="brand__mark"><Eye size={21} aria-hidden="true" /></div>
             <div className="brand__copy">
               <h1 className="brand__title">البصر <span>Al-Basar</span></h1>
             </div>
           </div>
+
           <div className="topbar__actions">
-            <button
-              type="button"
-              onClick={() => setIsTrainingOpen(true)}
-              className="icon-action"
-              aria-label="دليل تدريب الطلبة التفاعلي"
-              title="دليل تدريب الطلبة التفاعلي"
-            >
-              <GraduationCap size={19} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setAdminOpen(true)}
-              className="icon-action"
-              aria-label="لوحة المشرف والبيانات"
-              title="لوحة المشرف والبيانات"
-            >
-              <Settings size={19} aria-hidden="true" />
-            </button>
+            {/* 1 · One-tap sync with a pending-record badge */}
             <button
               type="button"
               onClick={() => void syncLocalRecordsToCloud(true)}
               className={`icon-action icon-action--sync${isOnline ? '' : ' is-offline'}`}
-              aria-label="مزامنة السجلات الآن"
-              title="مزامنة السجلات الآن"
+              aria-label={pendingSyncCount > 0
+                ? `مزامنة ${pendingSyncCount} سجل معلّق`
+                : 'مزامنة السجلات الآن'}
+              title={pendingSyncCount > 0
+                ? `${pendingSyncCount} سجل بانتظار المزامنة`
+                : 'مزامنة السجلات الآن'}
               disabled={!isOnline || isSyncing}
               aria-busy={isSyncing}
             >
@@ -1099,24 +1300,66 @@ export default function App() {
               )}
               {!isOnline && <span className="icon-action__offline-dot" aria-hidden="true" />}
             </button>
+
+            {/* 2 · Account: initials + lock / sign-out, or sign-in for a guest */}
             {examinerProfile ? (
-              <>
-                <span
-                  className="topbar__user"
-                  title={examinerProfile.fullName || examinerProfile.email || 'حساب الفاحص'}
-                >
-                  {shortDisplayName(examinerProfile.fullName, examinerProfile.email)}
-                </span>
+              <div className="topbar__account">
                 <button
                   type="button"
-                  onClick={handleCloudSignOut}
-                  className="icon-action"
-                  aria-label="تسجيل الخروج"
-                  title="تسجيل الخروج"
+                  onClick={() => setAccountMenuOpen((open) => !open)}
+                  className={`icon-action icon-action--account${accountMenuOpen ? ' is-open' : ''}`}
+                  aria-label="حساب الفاحص"
+                  aria-haspopup="menu"
+                  aria-expanded={accountMenuOpen}
+                  title={examinerProfile.fullName || examinerProfile.email || 'حساب الفاحص'}
                 >
-                  <LogOut size={19} aria-hidden="true" />
+                  <span className="topbar__avatar" aria-hidden="true">{examinerInitials}</span>
+                  {biometricBound && (
+                    <span className="icon-action__bio-dot" aria-hidden="true">
+                      <Fingerprint size={11} />
+                    </span>
+                  )}
                 </button>
-              </>
+
+                {accountMenuOpen && (
+                  <div className="account-menu" role="menu" aria-label="إجراءات الحساب">
+                    <div className="account-menu__head">
+                      <span className="account-menu__name">
+                        {examinerProfile.fullName || examinerProfile.email || 'حساب الفاحص'}
+                      </span>
+                      {biometricBound && (
+                        <span className="account-menu__badge">🔐 دخول بالبصمة مفعّل</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="account-menu__item"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        void handleLockApp();
+                      }}
+                    >
+                      {biometricBound
+                        ? <Fingerprint size={17} aria-hidden="true" />
+                        : <Lock size={17} aria-hidden="true" />}
+                      <span>قفل التطبيق</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="account-menu__item account-menu__item--danger"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        void handleCloudSignOut();
+                      }}
+                    >
+                      <LogOut size={17} aria-hidden="true" />
+                      <span>تسجيل الخروج</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <button
                 type="button"
@@ -1129,6 +1372,17 @@ export default function App() {
                 <span className="icon-action__label">دخول</span>
               </button>
             )}
+
+            {/* 3 · PIN-protected supervisor drawer */}
+            <button
+              type="button"
+              onClick={() => setAdminPinOpen(true)}
+              className="icon-action icon-action--admin"
+              aria-label="لوحة المشرف والبيانات"
+              title="لوحة المشرف والبيانات"
+            >
+              <Settings size={19} aria-hidden="true" />
+            </button>
           </div>
         </div>
       </header>
@@ -1147,7 +1401,11 @@ export default function App() {
         </div>
       </div>
 
-      <main className={`app-main${activeTab === 'acuity' ? ' app-main--acuity' : ''}`} id="main-content">
+      <main
+        className={`app-main${activeTab === 'acuity' ? ' app-main--acuity' : ''}`}
+        id="main-content"
+        inert={gateActive}
+      >
           <> 
             <div className="page-intro">
               <div>
@@ -1216,6 +1474,8 @@ export default function App() {
                   setReferralPHCC={setReferralPHCC}
                   onProceedToSmartStation={proceedFromRegistration}
                   onGenerateNextId={() => generateNextId()}
+                  onQRScannerOpenChange={setQrScannerOpen}
+                  qrScannerCloseSignal={qrScannerCloseSignal}
                 />
               )}
 
@@ -1364,6 +1624,70 @@ export default function App() {
           </>
       </main>
 
+      {/* ---------- Native install prompt (browser tab only) ---------- */}
+      {installPrompt.visible && (
+        <div className="install-banner" role="status">
+          <span className="install-banner__icon" aria-hidden="true">
+            <Smartphone size={19} />
+          </span>
+          <div className="install-banner__copy">
+            <strong>📲 تثبيت التطبيق على الهاتف</strong>
+            <small>
+              {installPrompt.isIos
+                ? 'في Safari: اضغط زر المشاركة ثم «إضافة إلى الشاشة الرئيسية».'
+                : 'افتح التطبيق بملء الشاشة بدون شريط المتصفح.'}
+            </small>
+          </div>
+          <div className="install-banner__actions">
+            {!installPrompt.isIos && (
+              <button
+                type="button"
+                className="m3-btn m3-btn--primary install-banner__btn"
+                onClick={() => void installPrompt.install()}
+              >
+                {installPrompt.canInstall ? 'تثبيت' : 'غير متاح'}
+              </button>
+            )}
+            {installPrompt.isIos && (
+              <span className="install-banner__ios" aria-hidden="true"><Share size={16} /></span>
+            )}
+            <button
+              type="button"
+              className="install-banner__close"
+              onClick={installPrompt.dismiss}
+              aria-label="إخفاء رسالة التثبيت"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- Native bottom tab bar (mobile) ---------- */}
+      <nav className="bottom-tabs" aria-label="خطوات الفحص">
+        {CLINICAL_STEPS.map((step) => {
+          const StepIcon = step.icon;
+          const isActive = activeTab === step.id;
+          const isDone = stepCompleted[step.id];
+          return (
+            <button
+              key={step.id}
+              type="button"
+              className={`bottom-tab${isActive ? ' is-active' : ''}${isDone ? ' is-done' : ''}`}
+              onClick={() => navigateToTab(step.id)}
+              aria-current={isActive ? 'page' : undefined}
+              aria-label={`${step.num}. ${step.tabLabel}`}
+            >
+              <span className="bottom-tab__icon" aria-hidden="true">
+                {isDone && !isActive ? <Check size={17} /> : <StepIcon size={19} />}
+              </span>
+              <span className="bottom-tab__label">{step.num}. {step.tabLabel}</span>
+              {isActive && <span className="bottom-tab__indicator" aria-hidden="true" />}
+            </button>
+          );
+        })}
+      </nav>
+
       {adminOpen && (
         <div className="admin-drawer-overlay" onClick={() => setAdminOpen(false)}>
           <div className="admin-drawer" onClick={e => e.stopPropagation()}>
@@ -1444,12 +1768,23 @@ export default function App() {
         onClose={() => setIsTrainingOpen(false)}
       />
 
-      {/* Minimal examiner account modal — only for cloud sync, never a gate */}
+      {/* Startup authentication gate / examiner account modal */}
       <CloudAuthModal
         isOpen={cloudLoginOpen}
         isOnline={isOnline}
+        isGate={authGateMode}
         onClose={handleCloseCloudLogin}
         onSignedIn={handleCloudSignedIn}
+      />
+
+      {/* Supervisor PIN gate in front of the Admin Drawer */}
+      <AdminPinGate
+        isOpen={adminPinOpen}
+        onClose={() => setAdminPinOpen(false)}
+        onUnlock={() => {
+          setAdminPinOpen(false);
+          setAdminOpen(true);
+        }}
       />
 
       <footer className="app-footer">
