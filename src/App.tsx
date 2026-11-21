@@ -54,6 +54,17 @@ import {
   readSessionContext,
   writeSessionContext,
 } from './utils/sessionContext';
+import {
+  clearScreeningDraft,
+  loadScreeningDraft,
+  saveScreeningDraft,
+  type ActiveScreeningDraft,
+} from './utils/screeningDraft';
+import {
+  deleteEyePhoto,
+  getEyePhoto,
+  saveEyePhoto,
+} from './utils/eyePhotoStore';
 
 import { CalibrationModule } from './components/CalibrationModule';
 import { RegistrationAndPaperStation } from './components/RegistrationAndPaperStation';
@@ -1093,6 +1104,10 @@ export default function App() {
     setRecords(updated);
 
     notify(`حُفظ فحص التلميذ ${newRecord.Child_ID}. بدأ سجل تلميذ جديد.`, 'success');
+    // Clear active draft after successful commit
+    clearScreeningDraft();
+    deleteEyePhoto('__active_draft__').catch(() => {});
+    setEyePhoto(null);
     generateNextId(updated);
     setActiveTab('protocol');
   };
@@ -1120,6 +1135,142 @@ export default function App() {
   useEffect(() => {
     if (!smartStartedAt) setChartMode(derivedChartMode);
   }, [derivedChartMode, smartStartedAt]);
+
+  const draftHydratedRef = useRef(false);
+  const liveDraftRef = useRef<ActiveScreeningDraft | null>(null);
+
+  // Hydrate active screening draft on first mount before user interaction.
+  useEffect(() => {
+    const draft = loadScreeningDraft();
+    if (!draft) return;
+    draftHydratedRef.current = true;
+    setChildId(draft.childId ?? '');
+    setGradeLevel(draft.gradeLevel ?? INITIAL_SESSION_CONTEXT.gradeLevel ?? 1);
+    setAgeYears(draft.ageYears ?? defaultAgeForGrade(INITIAL_SESSION_CONTEXT.gradeLevel ?? 1));
+    setGender(draft.gender ?? '');
+    setWearsGlasses(draft.wearsGlasses ?? -1);
+    setParentalConsent(draft.parentalConsent ?? 0);
+    setWHOPreScreen(draft.whoPreScreen ?? EMPTY_WHO_PRE_SCREEN);
+    setPaperOd(draft.paperOd ?? '');
+    setPaperOs(draft.paperOs ?? '');
+    setPaperTimeSec(draft.paperTimeSec ?? 0);
+    if (draft.paperStationStarted) setPaperStartedAt(new Date().toISOString());
+    setSmartOd(draft.smartOd ?? '');
+    setSmartOs(draft.smartOs ?? '');
+    setSmartTimeSec(draft.smartTimeSec ?? 0);
+    if (draft.smartStationStarted) setSmartStartedAt(new Date().toISOString());
+    setChartMode(draft.chartMode ?? 'TUMBLING_E');
+    setHirschbergMM(draft.hirschbergMM ?? 0.2);
+    setHirschbergRecorded(draft.hirschbergRecorded ?? false);
+    setMrd1MM(draft.mrd1MM ?? 4.1);
+    setMrd1Recorded(draft.mrd1Recorded ?? false);
+    setAIQualityFlag(draft.aiQualityFlag ?? 0);
+    setTriageOcularFlag(draft.triageOcularFlag ?? 0);
+    setAsthenopiaScore(draft.asthenopiaScore ?? 0);
+    setExternalEyeFindings(draft.externalEyeFindings ?? []);
+    setExternalEyeOther(draft.externalEyeOther ?? '');
+    setExternalEyeScreened(draft.externalEyeScreened ?? false);
+    const stepMap: Record<number, ClinicalStepId> = { 1: 'protocol', 2: 'acuity', 3: 'biometry', 4: 'cdss' };
+    setActiveTab(stepMap[draft.activeStep] ?? 'protocol');
+    if (draft.hasDraftPhoto) {
+      getEyePhoto('__active_draft__').then((blob) => {
+        if (blob) setEyePhoto({ blob, dataUrl: URL.createObjectURL(blob) });
+      }).catch(() => {});
+    }
+    notify('💾 تم استعادة بيانات التلميذ الحالي', 'info');
+  }, []);
+
+  // Auto-save draft on any screening field change, and persist eye photo.
+  useEffect(() => {
+    if (!draftHydratedRef.current) return;
+    const activeStep: 1 | 2 | 3 | 4 = activeTab === 'protocol' ? 1 : activeTab === 'acuity' ? 2 : activeTab === 'biometry' ? 3 : 4;
+    const draft: ActiveScreeningDraft = {
+      version: 1,
+      updatedAt: Date.now(),
+      activeStep,
+      childId,
+      gradeLevel,
+      ageYears,
+      gender,
+      wearsGlasses,
+      parentalConsent,
+      whoPreScreen,
+      paperOd,
+      paperOs,
+      paperTimeSec,
+      paperStationStarted: Boolean(paperStartedAt),
+      smartOd,
+      smartOs,
+      smartTimeSec,
+      smartStationStarted: Boolean(smartStartedAt),
+      chartMode,
+      hirschbergMM,
+      hirschbergRecorded,
+      mrd1MM,
+      mrd1Recorded,
+      aiQualityFlag,
+      triageOcularFlag,
+      asthenopiaScore,
+      externalEyeFindings,
+      externalEyeOther,
+      externalEyeScreened,
+      hasDraftPhoto: Boolean(eyePhoto),
+    };
+    liveDraftRef.current = draft;
+    saveScreeningDraft(draft);
+    if (eyePhoto?.blob) {
+      saveEyePhoto('__active_draft__', eyePhoto.blob).catch(() => {});
+    } else {
+      deleteEyePhoto('__active_draft__').catch(() => {});
+    }
+  }, [
+    activeTab,
+    childId,
+    gradeLevel,
+    ageYears,
+    gender,
+    wearsGlasses,
+    parentalConsent,
+    whoPreScreen,
+    paperOd,
+    paperOs,
+    paperTimeSec,
+    paperStartedAt,
+    smartOd,
+    smartOs,
+    smartTimeSec,
+    smartStartedAt,
+    chartMode,
+    hirschbergMM,
+    hirschbergRecorded,
+    mrd1MM,
+    mrd1Recorded,
+    aiQualityFlag,
+    triageOcularFlag,
+    asthenopiaScore,
+    externalEyeFindings,
+    externalEyeOther,
+    externalEyeScreened,
+    eyePhoto,
+  ]);
+
+  // Force synchronous flush on mobile app switch / lock
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden' && liveDraftRef.current) {
+        saveScreeningDraft(liveDraftRef.current);
+      }
+    };
+    const handlePageHide = () => {
+      if (liveDraftRef.current) saveScreeningDraft(liveDraftRef.current);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, []);
 
   const canNavigateTo = (tabId: ClinicalStepId) => {
     if (anyStationStarted && !bothStationsComplete) return tabId === activeTab;
@@ -1432,6 +1583,56 @@ export default function App() {
                         ? <Fingerprint size={17} aria-hidden="true" />
                         : <Lock size={17} aria-hidden="true" />}
                       <span>🔒 قفل الجلسة (بالبصمة)</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="account-menu__item"
+                      onClick={async () => {
+                        const confirmed = await confirmAction({
+                          title: 'مسح المسودة والبدء من جديد؟',
+                          message: 'سيتم حذف بيانات التلميذ الحالي غير المحفوظة والعودة خطوة 1. لا يمكن التراجع.',
+                          confirmLabel: 'مسح المسودة',
+                          danger: true,
+                        });
+                        if (!confirmed) return;
+                        setAccountMenuOpen(false);
+                        clearScreeningDraft();
+                        await deleteEyePhoto('__active_draft__').catch(() => {});
+                        setEyePhoto(null);
+                        // Reset screening state
+                        setChildId('');
+                        setGradeLevel(INITIAL_SESSION_CONTEXT.gradeLevel ?? 1);
+                        setAgeYears(defaultAgeForGrade(INITIAL_SESSION_CONTEXT.gradeLevel ?? 1));
+                        setGender('');
+                        setWearsGlasses(-1);
+                        setParentalConsent(0);
+                        setWHOPreScreen(EMPTY_WHO_PRE_SCREEN);
+                        setPaperOd('');
+                        setPaperOs('');
+                        setPaperTimeSec(0);
+                        setPaperStartedAt('');
+                        setPaperCompletedAt('');
+                        setSmartOd('');
+                        setSmartOs('');
+                        setSmartTimeSec(0);
+                        setSmartStartedAt('');
+                        setSmartCompletedAt('');
+                        setHirschbergMM(0.2);
+                        setHirschbergRecorded(false);
+                        setMrd1MM(4.1);
+                        setMrd1Recorded(false);
+                        setAIQualityFlag(0);
+                        setTriageOcularFlag(0);
+                        setAsthenopiaScore(0);
+                        setExternalEyeFindings([]);
+                        setExternalEyeOther('');
+                        setExternalEyeScreened(false);
+                        setActiveTab('protocol');
+                        notify('تم مسح المسودة والعودة للبداية.', 'info');
+                      }}
+                    >
+                      <span>🗑️ مسح المسودة والبدء من جديد</span>
                     </button>
                     <button
                       type="button"
