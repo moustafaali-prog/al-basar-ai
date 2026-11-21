@@ -5,7 +5,7 @@
  * cache-first, so school screening continues with no network at all.
  */
 const CACHE_PREFIX = 'albasar-app-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v16`;
+const CACHE_NAME = `${CACHE_PREFIX}v17`;
 
 const OPTIONAL_APP_SHELL_FILES = [
   './manifest.webmanifest',
