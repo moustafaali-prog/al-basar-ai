@@ -70,6 +70,11 @@ begin
   drop policy if exists "albasar open insert" on public.student_screening_records;
   drop policy if exists "albasar open update" on public.student_screening_records;
   drop policy if exists "allow_anon_all" on public.student_screening_records;
+  -- أسماء anon قديمة وُجدت فعلاً على الخادم الحي (إصدارات أقدم من المخطط).
+  drop policy if exists "albasar anon select" on public.student_screening_records;
+  drop policy if exists "albasar anon insert" on public.student_screening_records;
+  drop policy if exists "albasar anon update" on public.student_screening_records;
+  drop policy if exists "albasar anon delete" on public.student_screening_records;
   drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
   drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
   drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
@@ -94,7 +99,8 @@ begin
   -- 🔒 سحب صلاحيات anon من جدول السجلات (دفاع في العمق):
   --    RLS هي الحاجز الحقيقي (لا توجد أي سياسة لـ anon)، لكن سحب GRANT
   --    يجعل التبويق واضحاً: المفتاح المنشور لا يفتح جدول التلاميذ إطلاقاً.
-  revoke select, insert, update, delete on public.student_screening_records from anon;
+  --    `revoke all` يشمل TRUNCATE/REFERENCES/TRIGGER وليس الأربع الأساسية فقط.
+  revoke all on public.student_screening_records from anon;
 end $$;
 
 -- لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً، فالحذف ممنوع

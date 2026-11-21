@@ -287,6 +287,11 @@ drop policy if exists "albasar open insert" on public.student_screening_records;
 drop policy if exists "albasar open select" on public.student_screening_records;
 drop policy if exists "albasar open update" on public.student_screening_records;
 drop policy if exists "allow_anon_all" on public.student_screening_records;
+-- Legacy `anon` policy names found on the live project (older schema versions).
+drop policy if exists "albasar anon select" on public.student_screening_records;
+drop policy if exists "albasar anon insert" on public.student_screening_records;
+drop policy if exists "albasar anon update" on public.student_screening_records;
+drop policy if exists "albasar anon delete" on public.student_screening_records;
 drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
 drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
 drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
@@ -322,7 +327,7 @@ create policy "albasar_update_own_or_admin"
 -- Data API returns "permission denied for table" even when policies exist.
 -- Only `authenticated` is granted here; `anon` is intentionally left out.
 grant select, insert, update on public.student_screening_records to authenticated;
-revoke select, insert, update, delete on public.student_screening_records from anon;
+revoke all on public.student_screening_records from anon;
 
 -- =========================================================
 -- Ocular photo storage (PRIVATE bucket — IRB compliant)
