@@ -217,7 +217,7 @@ export default function App() {
   );
   const [gender, setGender] = useState('');
   const [wearsGlasses, setWearsGlasses] = useState<number>(-1);
-  const [crossoverSequence, setCrossoverSequence] = useState('ورقي (6m) ← رقمي (2m)');
+  const [crossoverSequence, setCrossoverSequence] = useState('PAPER_FIRST');
   const [whoPreScreen, setWHOPreScreen] = useState<WHOPreScreenDraft>(EMPTY_WHO_PRE_SCREEN);
   const [paperExaminerId, setPaperExaminerId] = useState(INITIAL_SESSION_CONTEXT.paperExaminerId);
   const [smartExaminerId, setSmartExaminerId] = useState(INITIAL_SESSION_CONTEXT.smartExaminerId);
@@ -883,7 +883,7 @@ export default function App() {
     );
     const nextNumber = extractParticipantNumber(nextId) ?? 0;
     setChildId(nextId);
-    setCrossoverSequence(crossoverSequenceForParticipantNumber(nextNumber || 1));
+    setCrossoverSequence('PAPER_FIRST');
     if (nextNumber > PARTICIPANT_ID_LAST) {
       notify(`تم استكمال إطار العينة المعتمد (BAB-${PARTICIPANT_ID_LAST}). راجع بروتوكول الدراسة قبل تسجيل مشاركين إضافيين.`, 'info');
     }
@@ -922,10 +922,7 @@ export default function App() {
   // crossover sequence from the numeric ID parity (SPIRIT Item 16).
   const handleChildIdChange = (id: string) => {
     setChildId(id);
-    const number = extractParticipantNumber(id);
-    if (number !== null) {
-      setCrossoverSequence(crossoverSequenceForParticipantNumber(number));
-    }
+    setCrossoverSequence('PAPER_FIRST');
   };
 
   const handleCommitRecord = async () => {
@@ -1100,8 +1097,8 @@ export default function App() {
     setActiveTab('protocol');
   };
 
-  const paperFirstSequence = 'ورقي (6m) ← رقمي (2m)';
-  const digitalFirstSequence = 'رقمي (2m) ← ورقي (6m)';
+  const paperFirstSequence = 'PAPER_FIRST';
+  const digitalFirstSequence = 'DIGITAL_FIRST';
   const isDigitalFirst = crossoverSequence === digitalFirstSequence;
   const isPaperFirst = crossoverSequence === paperFirstSequence;
   const anyStationStarted = Boolean(paperStartedAt || smartStartedAt);
@@ -1158,11 +1155,7 @@ export default function App() {
 
   const proceedFromRegistration = () => {
     if (!registrationReady) {
-      notify('أكمل الموافقة وبيانات المشارك والتسلسل المحدد قبل بدء المحطة الأولى.', 'error');
-      return;
-    }
-    if (isDigitalFirst && !smartCompletedAt) {
-      setActiveTab('acuity');
+      notify('أكمل الموافقة وبيانات المشارك قبل بدء المحطة الأولى.', 'error');
       return;
     }
     if (!paperStartedAt || !paperOd.trim() || !paperOs.trim()) {
@@ -1170,7 +1163,7 @@ export default function App() {
       return;
     }
     setPaperCompletedAt(new Date().toISOString());
-    setActiveTab(isDigitalFirst ? 'biometry' : 'acuity');
+    setActiveTab('acuity');
   };
 
   const activeClinicalIndex = CLINICAL_STEPS.findIndex((item) => item.id === activeTab);
@@ -1560,7 +1553,7 @@ export default function App() {
                     setPaperStartedAt(new Date().toISOString());
                     setPaperCompletedAt('');
                   }}
-                  showPaperStation={!isDigitalFirst || Boolean(smartCompletedAt)}
+                  showPaperStation={true}
                   isDigitalFirst={isDigitalFirst}
                   sequenceLocked={anyStationStarted}
                   smartCompleted={Boolean(smartCompletedAt)}
