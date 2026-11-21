@@ -39,7 +39,11 @@ create table if not exists public.student_screening_records (
   paper_snellen_os text,
   paper_logmar_os numeric(6, 3),
   paper_logmar_worse numeric(6, 3),
-  paper_time_sec integer,
+  -- Stopwatch duration in seconds with one decimal (e.g. 74.5).
+  -- MUST stay numeric: an `integer` column rejects "74.5" with SQLSTATE 22P02
+  -- (`invalid input syntax for type integer`) and truncates the precision the
+  -- SPSS time-comparison analysis needs.
+  paper_time_sec numeric,
   paper_referral integer,
   smart_snellen_od text,
   smart_acuity_od_below_test_range boolean,
@@ -49,7 +53,8 @@ create table if not exists public.student_screening_records (
   smart_logmar_os numeric(6, 3),
   smart_logmar_worse numeric(6, 3),
   smart_iod_logmar numeric(6, 3),
-  smart_time_sec integer,
+  -- Stopwatch duration in seconds with one decimal — same rule as paper_time_sec.
+  smart_time_sec numeric,
   hirschberg_asym_mm numeric(6, 3),
   hirschberg_prism_diopters integer,
   mrd1_min_mm numeric(6, 3),
@@ -104,7 +109,7 @@ alter table public.student_screening_records
   add column if not exists paper_snellen_os text,
   add column if not exists paper_logmar_os numeric(6, 3),
   add column if not exists paper_logmar_worse numeric(6, 3),
-  add column if not exists paper_time_sec integer,
+  add column if not exists paper_time_sec numeric,
   add column if not exists paper_referral integer,
   add column if not exists smart_snellen_od text,
   add column if not exists smart_acuity_od_below_test_range boolean,
@@ -114,7 +119,7 @@ alter table public.student_screening_records
   add column if not exists smart_logmar_os numeric(6, 3),
   add column if not exists smart_logmar_worse numeric(6, 3),
   add column if not exists smart_iod_logmar numeric(6, 3),
-  add column if not exists smart_time_sec integer,
+  add column if not exists smart_time_sec numeric,
   add column if not exists hirschberg_asym_mm numeric(6, 3),
   add column if not exists hirschberg_prism_diopters integer,
   add column if not exists mrd1_min_mm numeric(6, 3),
@@ -136,6 +141,26 @@ alter table public.student_screening_records
   add column if not exists examination_date timestamptz,
   add column if not exists owner_id uuid default auth.uid(),
   add column if not exists updated_at timestamptz not null default now();
+
+-- ---------------------------------------------------------------------------
+-- 🔧 تصحيح نوع عمودَي الزمن (SQLSTATE 22P02)
+--
+-- `add column if not exists` هو no-op إذا كان العمود موجوداً، لذا لا يكفي
+-- تغيير النوع في قائمة الإضافة: يجب تغيير نوع العمود القائم صراحةً.
+--
+-- السبب: المؤقتان يسجّلان الزمن بعُشر الثانية
+-- (`setPaperTimeSec(+elapsed.toFixed(1))` / `setSmartTimeSec(+elapsed.toFixed(1))`)،
+-- فتكتب قيمة مثل 74.5 بينما العمود كان `integer` — فيرفضه PostgreSQL بـ
+--   400 (22P02): invalid input syntax for type integer: "74.5"
+-- والتحويل إلى `numeric` يحفظ دقة الأجزاء العشرية التي يحتاجها تحليل
+-- المقارنة الزمنية في SPSS.
+--
+-- ⚠️ هذا البيان يُعيد كتابة الجدول (ACCESS EXCLUSIVE lock) — على جدول
+--   صغير فوري، وعلى جدول كبير نفّذه في نافذة صيانة.
+-- ---------------------------------------------------------------------------
+alter table public.student_screening_records
+  alter column paper_time_sec type numeric using paper_time_sec::numeric,
+  alter column smart_time_sec type numeric using smart_time_sec::numeric;
 
 create index if not exists idx_ssr_school_name on public.student_screening_records (school_name);
 create index if not exists idx_ssr_examination_date on public.student_screening_records (examination_date desc);

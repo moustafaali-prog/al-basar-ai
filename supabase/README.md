@@ -128,6 +128,41 @@ order by column_name;
 > `add column if not exists` في **الملفين** (وهو أصلح خطأ كان يوقف
 > إنشاء الفهرس `idx_ssr_examination_date` في `schema.sql`).
 
+### ١-ب) نوع عمودَي الزمن — يجب أن يكونا `numeric` لا `integer`
+```sql
+select column_name, data_type
+from information_schema.columns
+where table_schema = 'public' and table_name = 'student_screening_records'
+  and column_name in ('paper_time_sec','smart_time_sec')
+order by column_name;
+```
+> يجب أن يعيد `numeric` للعمودين.
+
+**لماذا؟** المؤقتان في المحطتين يسجّلان الزمن بعُشر الثانية:
+`setPaperTimeSec(+elapsed.toFixed(1))` و `setSmartTimeSec(+elapsed.toFixed(1))`.
+فتحصل قيمة مثل `74.5`، فإذا كان العمود `integer` يرفضها PostgreSQL بـ:
+
+```
+HTTP 400 (22P02): invalid input syntax for type integer: "74.5"
+```
+
+وتُفشل المزامنة كاملة. التحويل إلى `numeric` يحل الخطأ **ويحافظ** على دقة
+أجزاء الثانية التي يحتاجها تحليل المقارنة الزمنية في SPSS.
+
+> ⚠️ `add column if not exists` **لا يغيّر نوع عمود موجود**، لذلك يجب أن يحتوي
+> كل من `schema.sql` و `quick-migration.sql` أمر تحويل صريح:
+> ```sql
+> alter table public.student_screening_records
+>   alter column paper_time_sec type numeric using paper_time_sec::numeric,
+>   alter column smart_time_sec type numeric using smart_time_sec::numeric;
+> ```
+> هذا الأمر يُعيد كتابة الجدول (قفل `ACCESS EXCLUSIVE`) — فوري على جدول صغير،
+> ونفّذه في نافذة صيانة على جدول كبير.
+
+**الحماية الثانية (في الكود):** `src/utils/supabaseClient.ts` يمرّر كل عمود
+رقمي عبر دالة تحقّق (`toSafeInt` لعمود `integer`، `toSafeNum` لعمود الزمن،
+`toSafeNum63` لعمود `numeric(6,3)`)، فلا يصل خطأ نوع إلى قاعدة البيانات.
+
 ### ٢) الحاوية والسياسات (يجب أن يعيد 4 صفوف)
 ```sql
 select id, public from storage.buckets where id = 'screening-photos';

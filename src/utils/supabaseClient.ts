@@ -107,9 +107,67 @@ export async function getBearerToken(): Promise<string | null> {
 const n = <T>(value: T | undefined): T | null => (value === undefined ? null : value);
 
 /**
+ * Coerce a value to a finite number, or `null`.
+ *
+ * PostgreSQL rejects the string `"74.5"` for an `integer` column with
+ * SQLSTATE `22P02` (`invalid input syntax for type integer`). Both stopwatches
+ * report one decimal (`elapsed.toFixed(1)`), so every numeric column is
+ * funnelled through one of the helpers below and a stray decimal or a
+ * non-numeric string can never reach the database as a type error.
+ *
+ * Empty strings and `null`/`undefined` map to SQL `NULL` rather than `0`,
+ * because `Number(null)` and `Number('')` are both `0` and would silently
+ * fabricate a measurement.
+ */
+const toSafeNum = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/**
+ * Coerce a value to a finite integer, or `null`.
+ *
+ * Used for every `integer` column (`grade_level`, `parental_consent`,
+ * `wears_glasses`, `paper_referral`, `hirschberg_prism_diopters`,
+ * `triage_ocular_flag`, `ai_quality_flag`, `asthenopia_score`,
+ * `final_triage_referral`, `follow_up_status`, …).
+ *
+ * `Math.round` keeps 0/1 flags and small counts exact while guaranteeing the
+ * value satisfies the column's integer type.
+ */
+const toSafeInt = (value: unknown): number | null => {
+  const parsed = toSafeNum(value);
+  return parsed === null ? null : Math.round(parsed);
+};
+
+/**
+ * Coerce a value to a number that fits PostgreSQL `numeric(6,3)`, or `null`.
+ *
+ * `numeric(6,3)` accepts at most `999.999`; a larger value fails with
+ * SQLSTATE `22003` (`numeric field overflow`). Clamping keeps the sync alive
+ * instead of aborting the whole record.
+ */
+const toSafeNum63 = (value: unknown): number | null => {
+  const parsed = toSafeNum(value);
+  if (parsed === null) return null;
+  return Math.min(999.999, Math.max(-999.999, parsed));
+};
+
+/**
  * Explicit 1:1 mapper between the local `StudentScreeningRecord` shape and the
  * exact lowercase PostgreSQL columns declared in `supabase/schema.sql`.
  * Local-only fields such as `_syncStatus` are intentionally omitted.
+ *
+ * Every numeric column goes through a type-safe coercion:
+ * - `toSafeInt` for the `integer` columns (flags, counts, grade/age),
+ * - `toSafeNum` for the duration columns (`paper_time_sec`, `smart_time_sec`),
+ *   which are `numeric` in PostgreSQL so the stopwatch's tenth-of-a-second
+ *   precision survives the round trip for the SPSS time-comparison analysis,
+ * - `toSafeNum63` for the `numeric(6,3)` clinical columns.
+ *
+ * This is what prevents SQLSTATE `22P02` (`invalid input syntax for type
+ * integer: "74.5"`) from ever reaching the database.
  *
  * @param ownerId The signed-in Supabase account id. It is written to the
  *   `owner_id` column, which the RLS policies match against `auth.uid()` —
@@ -131,47 +189,50 @@ export function mapRecordToSupabaseRow(
     smart_examiner_id: n(record.Smart_Examiner_ID),
     smart_started_at: n(record.Smart_Started_At),
     smart_completed_at: n(record.Smart_Completed_At),
-    parental_consent: record.Parental_Consent,
+    parental_consent: toSafeInt(record.Parental_Consent),
     child_assent: n(record.Child_Assent),
     school_name: record.School_Name,
     school_sector: record.School_Sector,
-    grade_level: record.Grade_Level,
-    age_years: record.Age_Years,
+    grade_level: toSafeInt(record.Grade_Level),
+    age_years: toSafeInt(record.Age_Years),
     gender: record.Gender,
-    wears_glasses: record.Wears_Glasses,
+    wears_glasses: toSafeInt(record.Wears_Glasses),
     who_pre_screen: n(record.WHO_PreScreen),
     who_screening: n(record.WHO_Screening),
     external_eye_findings: n(record.WHO_Screening?.externalEyeFindings),
-    who_referral_flag: n(record.WHO_Referral_Flag),
+    who_referral_flag: toSafeInt(record.WHO_Referral_Flag),
     crossover_sequence: record.Crossover_Sequence,
     paper_snellen_od: record.Paper_Snellen_OD,
-    paper_logmar_od: record.Paper_LogMAR_OD,
+    paper_logmar_od: toSafeNum63(record.Paper_LogMAR_OD),
     paper_snellen_os: record.Paper_Snellen_OS,
-    paper_logmar_os: record.Paper_LogMAR_OS,
-    paper_logmar_worse: n(record.Paper_LogMAR_Worse),
-    paper_time_sec: record.Paper_Time_Sec,
-    paper_referral: record.Paper_Referral,
+    paper_logmar_os: toSafeNum63(record.Paper_LogMAR_OS),
+    paper_logmar_worse: toSafeNum63(record.Paper_LogMAR_Worse),
+    // Duration in seconds with one decimal (the stopwatch reports 74.5, …).
+    // The column is `numeric`, NOT `integer` — see `supabase/schema.sql`.
+    paper_time_sec: toSafeNum(record.Paper_Time_Sec),
+    paper_referral: toSafeInt(record.Paper_Referral),
     smart_snellen_od: record.Smart_Snellen_OD,
     smart_acuity_od_below_test_range: n(record.Smart_Acuity_OD_Below_Test_Range),
-    smart_logmar_od: record.Smart_LogMAR_OD,
+    smart_logmar_od: toSafeNum63(record.Smart_LogMAR_OD),
     smart_snellen_os: record.Smart_Snellen_OS,
     smart_acuity_os_below_test_range: n(record.Smart_Acuity_OS_Below_Test_Range),
-    smart_logmar_os: record.Smart_LogMAR_OS,
-    smart_logmar_worse: n(record.Smart_LogMAR_Worse),
-    smart_iod_logmar: record.Smart_IOD_LogMAR,
-    smart_time_sec: record.Smart_Time_Sec,
-    hirschberg_asym_mm: record.Hirschberg_Asym_mm,
-    hirschberg_prism_diopters: record.Hirschberg_Prism_Diopters,
-    mrd1_min_mm: record.MRD1_Min_mm,
-    triage_ocular_flag: record.Triage_Ocular_Flag,
-    ai_quality_flag: n(record.AI_Quality_Flag),
-    asthenopia_score: record.Asthenopia_Score,
-    final_triage_referral: record.Final_Triage_Referral,
+    smart_logmar_os: toSafeNum63(record.Smart_LogMAR_OS),
+    smart_logmar_worse: toSafeNum63(record.Smart_LogMAR_Worse),
+    smart_iod_logmar: toSafeNum63(record.Smart_IOD_LogMAR),
+    // Duration in seconds with one decimal — same rule as `paper_time_sec`.
+    smart_time_sec: toSafeNum(record.Smart_Time_Sec),
+    hirschberg_asym_mm: toSafeNum63(record.Hirschberg_Asym_mm),
+    hirschberg_prism_diopters: toSafeInt(record.Hirschberg_Prism_Diopters),
+    mrd1_min_mm: toSafeNum63(record.MRD1_Min_mm),
+    triage_ocular_flag: toSafeInt(record.Triage_Ocular_Flag),
+    ai_quality_flag: toSafeInt(record.AI_Quality_Flag),
+    asthenopia_score: toSafeInt(record.Asthenopia_Score),
+    final_triage_referral: toSafeInt(record.Final_Triage_Referral),
     referral_urgency: record.Referral_Urgency,
     referral_phcc: record.Referral_PHCC,
-    follow_up_status: record.FollowUp_Status,
-    spectacles_prescribed_fitted: n(record.Spectacles_Prescribed_Fitted),
-    gold_standard_confirmed: n(record.Gold_Standard_Confirmed),
+    follow_up_status: toSafeInt(record.FollowUp_Status),
+    spectacles_prescribed_fitted: toSafeInt(record.Spectacles_Prescribed_Fitted),
+    gold_standard_confirmed: toSafeInt(record.Gold_Standard_Confirmed),
     gold_standard_method: n(record.Gold_Standard_Method),
     gold_standard_examiner_id: n(record.Gold_Standard_Examiner_ID),
     gold_standard_date: n(record.Gold_Standard_Date),

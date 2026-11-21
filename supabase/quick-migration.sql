@@ -57,6 +57,14 @@ begin
 
   alter table public.student_screening_records enable row level security;
 
+  -- 🔧 تصحيح نوع عمودَي الزمن (SQLSTATE 22P02):
+  --    المؤقتان يسجّلان الزمن بعُشر الثانية (74.5 مثلاً)، والعمود كان integer
+  --    فيرفضه PostgreSQL بـ «invalid input syntax for type integer: "74.5"».
+  --    `add column if not exists` لا يغيّر نوع عمود موجود، لذا التحويل صريح.
+  alter table public.student_screening_records
+    alter column paper_time_sec type numeric using paper_time_sec::numeric,
+    alter column smart_time_sec type numeric using smart_time_sec::numeric;
+
   -- إسقاط أي سياسة مفتوحة سابقة (تمنع تسريب بيانات التلاميذ عبر anon).
   drop policy if exists "albasar open select" on public.student_screening_records;
   drop policy if exists "albasar open insert" on public.student_screening_records;
