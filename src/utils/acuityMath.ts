@@ -24,7 +24,7 @@ export const REFERRAL_LOGMAR_CUTOFF = 0.30;
 
 /** WHO (2025) code 88 sentinel: untestable child = mandatory referral. */
 export const UNTTESTABLE_LOGMAR = 88;
-export const UNTTESTABLE_ACUITY_LABEL = '88 (غير قابل للفحص - إحالة وجوبية)';
+export const UNTESTABLE_ACUITY_LABEL = '88 (غير قابل للفحص - إحالة وجوبية)';
 
 /** Urgent (48 h) acuity threshold: 6/36 => LogMAR >= 0.80. */
 export const URGENT_LOGMAR_CUTOFF = 0.80;
@@ -59,7 +59,7 @@ export const LOGMAR_MAP: Record<string, number> = {
   '6/6': 0.00,
   // WHO (2025) "Untestable Child" code. The child who cannot be tested is a
   // mandatory referral; the value is a sentinel code, not a measured acuity.
-  [UNTTESTABLE_ACUITY_LABEL]: UNTTESTABLE_LOGMAR,
+  [UNTESTABLE_ACUITY_LABEL]: UNTTESTABLE_LOGMAR,
 };
 
 function getObservedLogmar(snellen: string | undefined, recordedLogmar: number | undefined): number | null {

@@ -1491,7 +1491,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
         <p className="field-hint mt-2 flex items-start gap-1.5">
           <ShieldCheck size={13} aria-hidden="true" />
-          قياس محلي بالكامل — لا تُرفع الصور.
+          التحليل محلي بالكامل — تُحفظ الصورة محلياً وتُرفع إلى حسابك أثناء المزامنة.
         </p>
       </section>
 

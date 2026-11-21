@@ -1845,8 +1845,8 @@ export default function App() {
                       <div className="m3-card" style={{ padding: '18px' }}>
                         <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 800 }}>🎓 تدريب الطلبة الميداني</h3>
                         <p style={{ margin: '0 0 14px', color: 'var(--m3-muted)', fontSize: '12.5px', lineHeight: 1.8 }}>
-                          محاكي تفاعلي بصوت د. مصطفى علي غازي الشمري: ست محطات مصوّرة، وخمس حالات
-                          واقعية حسب منظمة الصحة العالمية 2025، ووضع اختبار للحل قبل كشفه.
+                          مركز تدريب تفاعلي: 8 وحدات مصوّرة، و7 حالات ميدانية، و12 تمرين قرار
+                          يعمل بمحرك التطبيق نفسه، مع قراءة صوتية اختيارية.
                         </p>
                         <button
                           type="button"

@@ -375,7 +375,7 @@ export const CDSSAndEmpathySimulator: React.FC<CDSSProps> = ({
             <img src={eyePhotoDataUrl} alt="صورة العينين الملتقطة أثناء الفحص" />
             <figcaption>
               <Sparkles size={13} aria-hidden="true" />
-              صورة العين الملتقطة — محفوظة محلياً وتُرفع للمركز الصحي عند المزامنة.
+              صورة العين الملتقطة — محفوظة محلياً وتُرفع إلى حسابك عند المزامنة.
             </figcaption>
           </figure>
         )}

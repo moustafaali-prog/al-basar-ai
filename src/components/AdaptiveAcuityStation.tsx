@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Eye, Maximize2, Minimize2 } from 'lucide-react';
 import { CalibrationData } from '../types';
-import { SNELLEN_LADDER, LOGMAR_MAP, UNTTESTABLE_ACUITY_LABEL, getOptotypePixelSize } from '../utils/acuityMath';
+import { SNELLEN_LADDER, LOGMAR_MAP, UNTESTABLE_ACUITY_LABEL, getOptotypePixelSize } from '../utils/acuityMath';
 import { useFeedback } from './FeedbackProvider';
 import { WashoutTimer } from './WashoutTimer';
 
@@ -245,11 +245,11 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     navigator.vibrate?.([40, 60, 40]);
     playEyeCompletedChime();
     if (activeEye === 'OD') {
-      setSmartOd(UNTTESTABLE_ACUITY_LABEL);
+      setSmartOd(UNTESTABLE_ACUITY_LABEL);
       notify('سُجّل رمز 88 للعين اليمنى (إحالة وجوبية). ننتقل إلى العين اليسرى.', 'info');
       startEyeTest('OS', true);
     } else {
-      setSmartOs(UNTTESTABLE_ACUITY_LABEL);
+      setSmartOs(UNTESTABLE_ACUITY_LABEL);
       setActiveEye('COMPLETED');
       setTimerActive(false);
       onSmartTestCompleted();
@@ -534,7 +534,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
             </span>
             <h2 className="acuity-start-card__title">👁️ ابدأ فحص العين اليمنى OD</h2>
             <ul className="acuity-start-card__list">
-              <li>تأكد أن الطفل جالس على بُعد <strong>2 متر</strong> من الشاشة.</li>
+              <li>تأكد أن الطفل جالس على بُعد <strong>{(calibration.testingDistanceMeters ?? 2.0).toFixed(1)} متر</strong> من الشاشة.</li>
               <li>غطِّ <strong>العين اليسرى</strong> بالكامل قبل البدء.</li>
               <li>اضغط الزر عندها فقط ليبدأ المؤقت؛ المدة تُسجَّل في تحليل SPSS.</li>
             </ul>

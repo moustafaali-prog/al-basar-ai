@@ -10,7 +10,7 @@ import {
   Square,
   UserCheck,
 } from 'lucide-react';
-import { UNTTESTABLE_ACUITY_LABEL } from '../utils/acuityMath';
+import { UNTESTABLE_ACUITY_LABEL } from '../utils/acuityMath';
 import { defaultAgeForGrade, readSessionContext, writeSessionContext } from '../utils/sessionContext';
 import { QRScannerModal, ScannedStudentData } from './QRScannerModal';
 import { WashoutTimer } from './WashoutTimer';
@@ -131,7 +131,7 @@ const PAPER_ACUITY_CHOICES = [
   '6/36',
   '6/60',
   'أقل من 6/60',
-  UNTTESTABLE_ACUITY_LABEL,
+  UNTESTABLE_ACUITY_LABEL,
 ] as const;
 
 const HEALTHY_PRE_SCREEN: WHOPreScreenDraft = {
@@ -181,7 +181,7 @@ const PaperAcuityGrid: React.FC<PaperAcuityGridProps> = ({ label, value, onChang
     </div>
     <div className="snellen-grid" role="group" aria-label={`حدة البصر الورقية — ${label}`}>
       {PAPER_ACUITY_CHOICES.map((option) => {
-        const isUntestable = option === UNTTESTABLE_ACUITY_LABEL;
+        const isUntestable = option === UNTESTABLE_ACUITY_LABEL;
         return (
           <button
             key={option}

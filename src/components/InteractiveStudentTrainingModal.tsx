@@ -1,215 +1,135 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  Eye,
+  Lightbulb,
+  RotateCcw,
+  Sparkles,
+  Target,
+  Trophy,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
 
 import {
+  DECISION_PRACTICE_CASES,
   FIELD_SCENARIOS,
   TRAINING_STAGES,
+  type DecisionPracticeCase,
   type FieldScenario,
 } from './trainingContent';
 import { TRAINING_CSS } from './trainingStyles';
+import { classifyClinicalDecision } from '../utils/acuityMath';
 
 interface TrainingModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type TrainingMode = 'walkthrough' | 'scenarios' | 'resources';
+type TrainingMode = 'walkthrough' | 'scenarios' | 'decision' | 'resources';
+type DecisionOutcome = 'MODEL_PRIORITY' | 'MODEL_REVIEW' | 'MODEL_NO_FLAG';
+
+interface OutcomeOption {
+  value: DecisionOutcome;
+  label: string;
+  shortLabel: string;
+  tone: 'urgent' | 'review' | 'pass';
+}
+
+const OUTCOME_OPTIONS: OutcomeOption[] = [
+  {
+    value: 'MODEL_PRIORITY',
+    label: 'إحالة عاجلة — طبيب عيون خلال 48 ساعة',
+    shortLabel: 'إحالة خلال 48 ساعة',
+    tone: 'urgent',
+  },
+  {
+    value: 'MODEL_REVIEW',
+    label: 'مراجعة — المركز الصحي خلال أسبوعين',
+    shortLabel: 'مراجعة خلال أسبوعين',
+    tone: 'review',
+  },
+  {
+    value: 'MODEL_NO_FLAG',
+    label: 'لا توجد إشارة ضمن حدود النموذج',
+    shortLabel: 'لا توجد إشارة',
+    tone: 'pass',
+  },
+];
+
+const outcomeOption = (value: DecisionOutcome): OutcomeOption =>
+  OUTCOME_OPTIONS.find((option) => option.value === value) ?? OUTCOME_OPTIONS[2];
 
 const scenarioNarration = (scenario: FieldScenario) =>
   `${scenario.title}. الموقف: ${scenario.situation} القاعدة: ${scenario.rule} التطبيق: ${scenario.click} ${scenario.tip}`;
 
-/* ------------------------------------------------------------------ */
-/* Mock app screens used behind the pulsing red annotations            */
-/* ------------------------------------------------------------------ */
-const MockStageScreen: React.FC<{ stage: number }> = ({ stage }) => {
-  if (stage === 0) {
-    return (
-      <div className="train-app">
-        <div className="train-app__status"><span>9:41</span><span>◉ ▮▮</span></div>
-        <div className="train-app__head">
-          <span className="train-app__eyebrow">الإعداد · مرة واحدة</span>
-          <strong>معايرة الشاشة</strong>
-        </div>
-        <div className="train-id">
-          <span className="train-id__flag" aria-hidden="true">🇮🇶</span>
-          <div>
-            <strong>البطاقة الوطنية العراقية</strong>
-            <small>الجمهورية العراقية · الهوية الموحدة</small>
-          </div>
-          <span className="train-id__chip">ID</span>
-        </div>
-        <div className="train-ruler"><span>↔</span><b>85.60 mm</b><span>↔</span></div>
-        <div className="train-checkrow"><span>مطابقة حافة البطاقة</span><span className="train-ok">✓</span></div>
-        <div className="train-checkrow"><span>كثافة البكسل</span><span className="train-ok">✓</span></div>
-        <div className="train-mockbtn">🔒 قفل المعايرة</div>
-        <p className="train-app__note">تُقفل مرة واحدة لكل جهاز</p>
-      </div>
-    );
-  }
-
-  if (stage === 1) {
-    return (
-      <div className="train-app">
-        <div className="train-app__status"><span>9:41</span><span>◉ ▮▮</span></div>
-        <div className="train-app__head">
-          <span className="train-app__eyebrow">المحطة أ · الاستقبال</span>
-          <strong>التعريف والموافقة</strong>
-        </div>
-        <div className="train-field">
-          <span>موافقة ولي الأمر</span>
-          <span className="train-pill train-pill--ok">Parental_Consent = 1</span>
-        </div>
-        <div className="train-field"><span>رقم التلميذ</span><b className="train-code">BAB-101</b></div>
-        <div className="train-field">
-          <span>النظارة</span>
-          <span className="train-seg"><i className="is-on">PVA</i><i>UVA</i></span>
-        </div>
-        <div className="train-who">
-          <b>WHO pre-screen</b>
-          <div className="train-chips"><span>رؤية</span><span>سمع</span><span>ألم</span><span>سكري</span></div>
-        </div>
-        <div className="train-route">
-          <small>المسار التلقائي</small>
-          <b>فردي: ورقي ← رقمي</b>
-          <span>زوجي: رقمي ← ورقي</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (stage === 2) {
-    return (
-      <div className="train-app">
-        <div className="train-app__status"><span>9:41</span><span>◉ ▮▮</span></div>
-        <div className="train-app__head">
-          <span className="train-app__eyebrow">المحطة ب · اللوحة الورقية</span>
-          <strong>لوحة العينين</strong>
-        </div>
-        <div className="train-eye-row">
-          <span className="train-eye-tag">OD</span><b>6/12</b><span className="train-locked">🔒 ***</span>
-        </div>
-        <div className="train-eye-row train-eye-row--muted">
-          <span className="train-eye-tag">OS</span><b>—</b><span className="train-locked">بانتظار</span>
-        </div>
-        <div className="train-tools">
-          <div>🧴<small>كحول 70%</small></div>
-          <div>🕶️<small>غطاء معقّم</small></div>
-        </div>
-        <div className="train-timer">
-          <span>WASHOUT TIMER</span><b>02:00</b>
-          <div className="train-progress"><i /></div>
-        </div>
-        <p className="train-app__note">دقيقتان كاملتان قبل الفحص الرقمي</p>
-      </div>
-    );
-  }
-
-  if (stage === 3) {
-    return (
-      <div className="train-app">
-        <div className="train-app__status"><span>9:41</span><span>◉ ▮▮</span></div>
-        <div className="train-app__head">
-          <span className="train-app__eyebrow">المحطة ج · الفحص التكيفي</span>
-          <strong>فحص النظر الذكي</strong>
-        </div>
-        <div className="train-mode-toggle">
-          <span className="is-on">HOTV</span>
-          <span>Tumbling E</span>
-        </div>
-        <div className="train-age-row"><span>6 سنوات · صف 1 → HOTV</span><span>تلقائي</span></div>
-        <div className="train-optotype">H</div>
-        <div className="train-lapcard">🪪 بطاقة الحضن · Lap Card</div>
-        <div className="train-stairs">
-          <span className="is-fail">6/60</span><span>←</span>
-          <span className="is-next">6/12</span><span>←</span><span>6/6</span>
-        </div>
-        <p className="train-app__note">لمس أعمى · بدون مساعدة</p>
-      </div>
-    );
-  }
-
-  if (stage === 4) {
-    return (
-      <div className="train-app">
-        <div className="train-app__status"><span>9:41</span><span>◉ ▮▮</span></div>
-        <div className="train-app__head">
-          <span className="train-app__eyebrow">المحطة ج · الكاميرا</span>
-          <strong>انعكاس القرنية</strong>
-        </div>
-        <div className="train-camera">
-          <div className="train-face">
-            <span className="train-face__eye train-face__eye--l" />
-            <span className="train-face__eye train-face__eye--r"><b className="train-flash" /></span>
-            <span className="train-face__nose" />
-            <span className="train-face__mouth" />
-          </div>
-          <span className="train-camera__badge">Portrait · 1.0 m · ظهر الطفل للشباك</span>
-        </div>
-        <div className="train-quality">
-          <span className="is-on">1 جيدة</span><span className="is-warn">2 إعادة</span><span>3 يدوي</span>
-        </div>
-        <div className="train-signs">
-          <span>قشور/قيح الجفن</span><span>احمرار الصلبة</span>
-          <span>إفرازات العين</span><span>عتامة القرنية</span>
-        </div>
-        <p className="train-app__note">AI_Quality_Flag · لا تحفظ صورة رديئة</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="train-app">
-      <div className="train-app__status"><span>9:41</span><span>◉ ▮▮</span></div>
-      <div className="train-app__head">
-        <span className="train-app__eyebrow">المحطة د · النتيجة</span>
-        <strong>بطاقة ولي الأمر</strong>
-      </div>
-      <div className="train-parentcard">
-        <span className="train-parentcard__tag">نسخة مموّهة Gaussian</span>
-        <div className="train-blur-lines"><i /><i /><i /></div>
-        <div className="train-parentcard__badges">
-          <span>☀️ 90 دقيقة خارج</span><span>👀 20-20-20</span>
-        </div>
-      </div>
-      <div className="train-audit">
-        <small>Visit 2 · PHCC</small>
-        <div className="train-audit__row"><span>FollowUp_Status</span><b>2</b></div>
-        <div className="train-audit__row"><span>Gold_Standard_Confirmed</span><b>1</b></div>
-        <div className="train-audit__row"><span>Spectacles_Prescribed_Fitted</span><b>1</b></div>
-      </div>
-      <div className="train-mockbtn">📤 تصدير البطاقة</div>
-    </div>
+const classifyPracticeCase = (practiceCase: DecisionPracticeCase) =>
+  classifyClinicalDecision(
+    practiceCase.smartOd,
+    practiceCase.smartOs,
+    practiceCase.hirschbergMM,
+    practiceCase.mrd1MM,
+    practiceCase.asthenopiaScore,
+    {
+      paperOd: practiceCase.paperOd,
+      paperOs: practiceCase.paperOs,
+      externalEyeFindings: practiceCase.externalEyeFindings,
+      whoPreScreen: {
+        diabetes: practiceCase.diabetes ? 'YES' : 'NO',
+        eyePainOrSevereItch: practiceCase.eyePain ? 'YES' : 'NO',
+        childAssent: 'YES',
+      },
+    },
   );
+
+const formatFinding = (finding: string): string => {
+  const labels: Record<string, string> = {
+    LEUKOCORIA: 'انعكاس حدقي أبيض أو غير طبيعي',
+    CORNEAL_HAZINESS: 'عتامة أو تندب القرنية',
+    SCLERAL_REDNESS: 'احمرار ملتحمة حاد أو إفرازات قيحية',
+    ANISOCORIA: 'تفاوت واضح في حجم الحدقتين',
+    EYE_MISALIGNMENT: 'انحراف أو حول ظاهر بالعين المجردة',
+  };
+  return labels[finding] ?? finding;
 };
 
-/* ------------------------------------------------------------------ */
-/* Modal                                                               */
-/* ------------------------------------------------------------------ */
 export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
   isOpen,
   onClose,
 }) => {
   const [mode, setMode] = useState<TrainingMode>('walkthrough');
   const [stageIndex, setStageIndex] = useState(0);
-  const [activeCalloutId, setActiveCalloutId] = useState<string>(
-    TRAINING_STAGES[0].callouts[0].id,
-  );
-  const [practiceMode, setPracticeMode] = useState(true);
   const [openScenarios, setOpenScenarios] = useState<string[]>([]);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [practiceCaseIndex, setPracticeCaseIndex] = useState(0);
+  const [selectedOutcome, setSelectedOutcome] = useState<DecisionOutcome | null>(null);
+  const [answerChecked, setAnswerChecked] = useState(false);
+  const [practiceScore, setPracticeScore] = useState(0);
+  const [answeredCount, setAnsweredCount] = useState(0);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
   const [speechSupported] = useState(
     () => typeof window !== 'undefined' && 'speechSynthesis' in window,
   );
 
   const stage = TRAINING_STAGES[stageIndex];
-  const activeCallout =
-    stage.callouts.find((callout) => callout.id === activeCalloutId) ?? stage.callouts[0];
-  const activeCalloutIndex = Math.max(
-    0,
-    stage.callouts.findIndex((callout) => callout.id === activeCallout.id),
+  const practiceCase = DECISION_PRACTICE_CASES[practiceCaseIndex];
+  const engineResult = useMemo(
+    () => classifyPracticeCase(practiceCase),
+    [practiceCase],
   );
+  const actualOutcome = outcomeOption(engineResult.urgency);
+  const selectedOption = selectedOutcome ? outcomeOption(selectedOutcome) : null;
+  const isPracticeCorrect = selectedOutcome === engineResult.urgency;
   const stageSpeechId = `stage-${stage.id}`;
-  const revealedCount = openScenarios.length;
 
   const stopSpeech = useCallback(() => {
     if (!speechSupported) return;
@@ -245,7 +165,6 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
     setTtsEnabled((current) => !current);
   };
 
-  /* Escape closes the dialog; the page behind stays put. */
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -254,34 +173,25 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      window.cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
     };
   }, [isOpen, onClose]);
 
-  /* Reset the annotation and stop the previous narration when the station changes. */
   useEffect(() => {
     if (!isOpen) return;
-    setActiveCalloutId(TRAINING_STAGES[stageIndex].callouts[0].id);
-    if (!speechSupported) return;
-    window.speechSynthesis.cancel();
+    stopSpeech();
     setSpeakingId(null);
-  }, [stageIndex, isOpen, speechSupported]);
-
-  /* Never keep reading when switching modes or closing the modal. */
-  useEffect(() => {
-    if (!isOpen || !speechSupported) return;
-    window.speechSynthesis.cancel();
-    setSpeakingId(null);
-  }, [mode, isOpen, speechSupported]);
+  }, [stageIndex, isOpen, stopSpeech]);
 
   useEffect(() => {
-    if (!isOpen && speechSupported) {
-      window.speechSynthesis.cancel();
-      setSpeakingId(null);
-    }
-  }, [isOpen, speechSupported]);
+    if (!isOpen) return;
+    stopSpeech();
+    setSpeakingId(null);
+  }, [mode, isOpen, stopSpeech]);
 
   useEffect(
     () => () => {
@@ -292,17 +202,6 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handlePracticeToggle = () => {
-    if (practiceMode) {
-      setPracticeMode(false);
-      setOpenScenarios(FIELD_SCENARIOS.map((scenario) => scenario.id));
-    } else {
-      setPracticeMode(true);
-      setOpenScenarios([]);
-    }
-    stopSpeech();
-  };
-
   const toggleScenario = (scenarioId: string) => {
     setOpenScenarios((current) =>
       current.includes(scenarioId)
@@ -312,11 +211,38 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
     stopSpeech();
   };
 
+  const checkPracticeAnswer = () => {
+    if (!selectedOutcome || answerChecked) return;
+    setAnswerChecked(true);
+    setAnsweredCount((count) => count + 1);
+    if (selectedOutcome === engineResult.urgency) {
+      setPracticeScore((score) => score + 1);
+    }
+  };
+
+  const goToPracticeCase = (index: number) => {
+    setPracticeCaseIndex(index);
+    setSelectedOutcome(null);
+    setAnswerChecked(false);
+    stopSpeech();
+  };
+
+  const resetPractice = () => {
+    setPracticeCaseIndex(0);
+    setSelectedOutcome(null);
+    setAnswerChecked(false);
+    setPracticeScore(0);
+    setAnsweredCount(0);
+    stopSpeech();
+  };
+
   const voiceHint = !speechSupported
-    ? 'جهازك لا يدعم النطق الآلي بالعربية. اقرأ التوجيه بصوتك للطلبة، أو استخدم النص المكتوب.'
+    ? 'هذا الجهاز لا يدعم القراءة الصوتية. اقرأ النص مباشرة أو استخدم قارئ الشاشة.'
     : !ttsEnabled
-      ? 'الصوت مكتوم مؤقتاً. فعّل زر 🔊 من أعلى النافذة إذا أردت سماع التوجيه.'
-      : 'يمكنك الاستماع للتوجيه أو قراءته بصوتك. لا توجد ملفات صوتية خارجية، فكل شيء يعمل داخل الجهاز.';
+      ? 'الصوت مكتوم. فعّله من أعلى النافذة لسماع التوجيه.'
+      : 'القراءة الصوتية تعمل داخل الجهاز، بلا ملفات صوتية خارجية.';
+
+  const stageNarration = `${stage.narration} الخطوات: ${stage.steps.join(' ')}`;
 
   return (
     <div
@@ -335,10 +261,12 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
       >
         <header className="train-header">
           <div className="train-header__identity">
-            <div className="train-header__mark" aria-hidden="true">🎓</div>
+            <div className="train-header__mark" aria-hidden="true">
+              <ClipboardCheck size={25} />
+            </div>
             <div className="train-header__copy">
-              <h2 id="interactive-training-title">دليل تدريب الطلبة التفاعلي</h2>
-              <p>محاكي ميداني بصوت د. مصطفى · 6 محطات · 5 حالات WHO 2025</p>
+              <h2 id="interactive-training-title">مركز تدريب الفاحصين</h2>
+              <p>8 وحدات ميدانية · 7 حالات · 12 تمرين قرار · لقطات حقيقية من التطبيق</p>
             </div>
           </div>
           <div className="train-header__actions">
@@ -348,30 +276,25 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
               onClick={toggleVoice}
               disabled={!speechSupported}
               aria-pressed={ttsEnabled}
-              title={speechSupported ? 'تشغيل أو كتم النطق الآلي' : 'النطق الآلي غير مدعوم على هذا الجهاز'}
+              title={speechSupported ? 'تشغيل أو كتم القراءة الصوتية' : 'القراءة الصوتية غير مدعومة'}
             >
-              <span aria-hidden="true">{speechSupported ? (ttsEnabled ? '🔊' : '🔇') : '🔇'}</span>
-              <span>
-                {speechSupported
-                  ? ttsEnabled
-                    ? 'الصوت مفعّل'
-                    : 'الصوت مكتوم'
-                  : 'النطق غير مدعوم'}
-              </span>
+              {speechSupported && ttsEnabled ? <Volume2 size={17} /> : <VolumeX size={17} />}
+              <span>{speechSupported && ttsEnabled ? 'الصوت مفعّل' : 'الصوت مكتوم'}</span>
             </button>
             <button
+              ref={closeButtonRef}
               type="button"
               className="train-close"
               onClick={onClose}
-              aria-label="إغلاق دليل التدريب"
+              aria-label="إغلاق مركز التدريب"
             >
-              ✕
+              <X size={19} />
             </button>
           </div>
         </header>
 
         <div className="train-modebar">
-          <div className="train-modes" role="tablist" aria-label="وضع التدريب">
+          <div className="train-modes" role="tablist" aria-label="أقسام مركز التدريب">
             <button
               type="button"
               role="tab"
@@ -379,7 +302,7 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
               className={mode === 'walkthrough' ? 'is-active' : ''}
               onClick={() => setMode('walkthrough')}
             >
-              🎬 جولة المحطات
+              <BookOpen size={15} /> الجولة
             </button>
             <button
               type="button"
@@ -388,7 +311,16 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
               className={mode === 'scenarios' ? 'is-active' : ''}
               onClick={() => setMode('scenarios')}
             >
-              🧠 حالات ميدانية
+              <Lightbulb size={15} /> حالات ميدانية
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'decision'}
+              className={mode === 'decision' ? 'is-active' : ''}
+              onClick={() => setMode('decision')}
+            >
+              <Target size={15} /> اختبر قرارك
             </button>
             <button
               type="button"
@@ -397,39 +329,32 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
               className={mode === 'resources' ? 'is-active' : ''}
               onClick={() => setMode('resources')}
             >
-              📚 مرجع الأدلة والروابط
+              <Eye size={15} /> مرجع سريع
             </button>
           </div>
           {mode === 'scenarios' && (
-            <div className="train-practice">
-              <button
-                type="button"
-                className={`train-practice__btn${practiceMode ? ' is-on' : ''}`}
-                onClick={handlePracticeToggle}
-                aria-pressed={practiceMode}
-              >
-                🎯 وضع الاختبار {practiceMode ? 'مفعّل' : 'متوقف'}
-              </button>
-              {practiceMode && (
-                <button
-                  type="button"
-                  className="train-reset"
-                  onClick={() => {
-                    setOpenScenarios([]);
-                    stopSpeech();
-                  }}
-                >
-                  ↺ إعادة
-                </button>
-              )}
+            <button
+              type="button"
+              className="train-reset"
+              onClick={() => {
+                setOpenScenarios([]);
+                stopSpeech();
+              }}
+            >
+              <RotateCcw size={14} /> إعادة
+            </button>
+          )}
+          {mode === 'decision' && (
+            <div className="train-score" aria-live="polite">
+              {answeredCount} إجابة · {practiceScore} صحيحة
             </div>
           )}
         </div>
 
         <div className="train-body">
-          {mode === 'walkthrough' ? (
+          {mode === 'walkthrough' && (
             <>
-              <nav className="train-rail" aria-label="محطات الجولة الست">
+              <nav className="train-rail" aria-label="وحدات الجولة">
                 {TRAINING_STAGES.map((item, index) => (
                   <button
                     key={item.id}
@@ -438,7 +363,7 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                     onClick={() => setStageIndex(index)}
                     aria-current={index === stageIndex ? 'step' : undefined}
                   >
-                    <span className="train-rail__num">{index < stageIndex ? '✓' : item.id}</span>
+                    <span className="train-rail__num">{index < stageIndex ? <Check size={13} /> : index + 1}</span>
                     <span className="train-rail__label">{item.short}</span>
                   </button>
                 ))}
@@ -446,7 +371,7 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
 
               <article className="train-stage">
                 <header className="train-stage__head">
-                  <span className="train-stage__badge">المحطة {stage.id} · {stage.station}</span>
+                  <span className="train-stage__badge">{stage.station}</span>
                   <div className="train-stage__heading">
                     <h3>{stage.title}</h3>
                     <p>{stage.subtitle}</p>
@@ -454,33 +379,25 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                 </header>
 
                 <div className="train-stage__grid">
-                  <div className="train-visual">
-                    <div className="train-phone">
-                      <div className="train-phone__screen">
-                        <MockStageScreen stage={stage.id} />
-                      </div>
-                      {stage.callouts.map((callout, index) => (
-                        <button
-                          key={callout.id}
-                          type="button"
-                          className={`train-callout${activeCallout.id === callout.id ? ' is-active' : ''}`}
-                          style={{ left: `${callout.x}%`, top: `${callout.y}%` }}
-                          onClick={() => setActiveCalloutId(callout.id)}
-                          aria-label={`النقطة ${index + 1}: ${callout.title}`}
-                          aria-pressed={activeCallout.id === callout.id}
-                        >
-                          {index + 1}
-                        </button>
-                      ))}
+                  <figure className="train-shot">
+                    <div className="train-shot__frame">
+                      <img
+                        src={`${import.meta.env.BASE_URL}${stage.screenshot}`}
+                        alt={stage.screenshotAlt}
+                        loading="lazy"
+                      />
                     </div>
-                    <p className="train-visual__hint">اضغط النقاط الحمراء النابضة لقراءة الشرح</p>
-                  </div>
+                    <figcaption>
+                      <CheckCircle2 size={14} aria-hidden="true" />
+                      لقطة حقيقية من التطبيق الحالي
+                    </figcaption>
+                  </figure>
 
                   <div className="train-coach">
                     <div className="train-voice">
                       <div className="train-voice__label">
-                        <span aria-hidden="true">🎤</span>
-                        <span>توجيه د. مصطفى علي غازي الشمري:</span>
+                        <Sparkles size={16} aria-hidden="true" />
+                        <span>التوجيه المختصر</span>
                       </div>
                       <p className="train-voice__text">{stage.narration}</p>
                       <div className="train-voice__actions">
@@ -490,46 +407,49 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                           onClick={() =>
                             speakingId === stageSpeechId
                               ? stopSpeech()
-                              : speak(stage.narration, stageSpeechId)
+                              : speak(stageNarration, stageSpeechId)
                           }
                           disabled={!ttsEnabled || !speechSupported}
                         >
-                          {speakingId === stageSpeechId ? '⏹ أوقف القراءة' : '🔊 اسمع التوجيه'}
+                          {speechSupported ? <Volume2 size={15} /> : <VolumeX size={15} />}
+                          {speakingId === stageSpeechId ? 'أوقف القراءة' : 'اسمع التوجيه والخطوات'}
                         </button>
                         {speakingId && speakingId !== stageSpeechId && (
-                          <button
-                            type="button"
-                            className="train-speak-btn train-speak-btn--ghost"
-                            onClick={stopSpeech}
-                          >
-                            ⏹ إيقاف
+                          <button type="button" className="train-speak-btn train-speak-btn--ghost" onClick={stopSpeech}>
+                            إيقاف
                           </button>
                         )}
                       </div>
                       <p className="train-voice__hint">{voiceHint}</p>
                     </div>
 
-                    <div className={`train-callout-card${activeCallout ? '' : ' train-callout-card--empty'}`}>
-                      {activeCallout ? (
-                        <>
-                          <span className="train-callout-card__num">{activeCalloutIndex + 1}</span>
-                          <div>
-                            <strong>{activeCallout.title}</strong>
-                            <p>{activeCallout.detail}</p>
-                          </div>
-                        </>
-                      ) : (
-                        <span>اضغط على أي نقطة حمراء فوق شاشة الهاتف لتشاهد الشرح التفصيلي.</span>
-                      )}
-                    </div>
+                    <section className="train-block">
+                      <h4><ClipboardCheck size={16} /> ماذا تفعل؟</h4>
+                      <ol className="train-step-list">
+                        {stage.steps.map((step, index) => (
+                          <li key={step}>
+                            <span>{index + 1}</span>
+                            <p>{step}</p>
+                          </li>
+                        ))}
+                      </ol>
+                    </section>
                   </div>
                 </div>
 
-                <div className="train-checklist">
-                  <h4>✅ تذكير سريع قبل ما تنتقل للمحطة التالية</h4>
-                  <ul>
-                    {stage.checklist.map((item) => <li key={item}>{item}</li>)}
-                  </ul>
+                <div className="train-stage__lower">
+                  <section className="train-block train-block--warn">
+                    <h4><AlertTriangle size={16} /> لا تخلط بين هذه القواعد</h4>
+                    <ul className="train-attention-list">
+                      {stage.attention.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </section>
+                  <section className="train-block train-block--pass">
+                    <h4><CheckCircle2 size={16} /> قبل أن تنتقل</h4>
+                    <ul className="train-check-list">
+                      {stage.checklist.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </section>
                 </div>
 
                 <div className="train-stage__nav">
@@ -539,45 +459,40 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                     onClick={() => setStageIndex((index) => Math.max(0, index - 1))}
                     disabled={stageIndex === 0}
                   >
-                    → المحطة السابقة
+                    <ChevronRight size={16} /> الوحدة السابقة
                   </button>
-                  <span className="train-stage__progress">
-                    المحطة {stageIndex + 1} من {TRAINING_STAGES.length}
-                  </span>
+                  <span className="train-stage__progress">الوحدة {stageIndex + 1} من {TRAINING_STAGES.length}</span>
                   {stageIndex < TRAINING_STAGES.length - 1 ? (
                     <button
                       type="button"
                       className="train-nav-btn train-nav-btn--primary"
-                      onClick={() =>
-                        setStageIndex((index) => Math.min(TRAINING_STAGES.length - 1, index + 1))
-                      }
+                      onClick={() => setStageIndex((index) => Math.min(TRAINING_STAGES.length - 1, index + 1))}
                     >
-                      المحطة التالية ←
+                      الوحدة التالية <ChevronLeft size={16} />
                     </button>
                   ) : (
                     <button
                       type="button"
                       className="train-nav-btn train-nav-btn--primary"
-                      onClick={() => setMode('scenarios')}
+                      onClick={() => setMode('decision')}
                     >
-                      اختبر نفسك بالحالات 🧠
+                      اختبر قرارك الآن <Target size={16} />
                     </button>
                   )}
                 </div>
               </article>
             </>
-          ) : mode === 'scenarios' ? (
+          )}
+
+          {mode === 'scenarios' && (
             <div className="train-scenarios">
               <div className="train-scenarios__head">
                 <div className="train-scenarios__intro">
-                  <h3>5 حالات واقعية من الميدان</h3>
-                  <p>
-                    اقرأ الموقف والقاعدة، وخمّن الزر قبل ما تفتح الحل. جرّب تجاوب بصوتك أولاً،
-                    بعدها اضغط البطاقة.
-                  </p>
+                  <h3>حالات واقعية: ماذا تفعل الآن؟</h3>
+                  <p>اقرأ الموقف والقاعدة أولاً. خمّن الإجراء، ثم افتح الحل وقارنه بخطوات التطبيق.</p>
                 </div>
                 <span className="train-score">
-                  {practiceMode ? `${revealedCount} / ${FIELD_SCENARIOS.length} محلولة` : 'كل الحلول ظاهرة'}
+                  {openScenarios.length} / {FIELD_SCENARIOS.length} مكشوفة
                 </span>
               </div>
 
@@ -586,10 +501,7 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                   const isOpen = openScenarios.includes(scenario.id);
                   const scenarioSpeechId = `scenario-${scenario.id}`;
                   return (
-                    <article
-                      key={scenario.id}
-                      className={`train-scenario${isOpen ? ' is-open' : ''}`}
-                    >
+                    <article key={scenario.id} className={`train-scenario${isOpen ? ' is-open' : ''}`}>
                       <button
                         type="button"
                         className="train-scenario__head"
@@ -606,23 +518,31 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                       </button>
 
                       <div className="train-scenario__body" id={`scenario-body-${scenario.id}`}>
+                        <figure className="train-scenario__evidence">
+                          <img
+                            src={`${import.meta.env.BASE_URL}${scenario.screenshot}`}
+                            alt={scenario.screenshotAlt}
+                            loading="lazy"
+                          />
+                          <figcaption>دليل مرئي من التطبيق الحالي</figcaption>
+                        </figure>
                         <section className="train-scenario__block train-scenario__block--a">
-                          <span>(A) الموقف السريري</span>
+                          <span>الموقف</span>
                           <p>{scenario.situation}</p>
                         </section>
                         <section className="train-scenario__block train-scenario__block--b">
-                          <span>(B) قاعدة منظمة الصحة العالمية 2025</span>
+                          <span>القاعدة</span>
                           <p>{scenario.rule}</p>
                         </section>
 
                         {isOpen ? (
                           <div className="train-scenario__answer">
                             <section className="train-scenario__block train-scenario__block--c">
-                              <span>(C) شنو تضغط في Al-Basar AI</span>
+                              <span>الإجراء الصحيح</span>
                               <p>{scenario.click}</p>
                             </section>
                             <section className="train-scenario__block train-scenario__block--d">
-                              <span>(D) 🎤 توجيه د. مصطفى</span>
+                              <span>نصيحة ميدانية</span>
                               <p>{scenario.tip}</p>
                             </section>
                             <button
@@ -635,16 +555,12 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                               }
                               disabled={!ttsEnabled || !speechSupported}
                             >
-                              {speakingId === scenarioSpeechId ? '⏹ أوقف القراءة' : '🔊 اسمع الحل كاملاً'}
+                              <Volume2 size={14} /> اسمع الحالة كاملة
                             </button>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            className="train-reveal"
-                            onClick={() => toggleScenario(scenario.id)}
-                          >
-                            خمّن أولاً… أظهر الحل 👀
+                          <button type="button" className="train-reveal" onClick={() => toggleScenario(scenario.id)}>
+                            خمّن الإجراء… ثم أظهر الحل
                           </button>
                         )}
                       </div>
@@ -653,54 +569,187 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                 })}
               </div>
             </div>
-          ) : (
+          )}
+
+          {mode === 'decision' && (
+            <div className="train-practice">
+              <div className="train-practice__head">
+                <div>
+                  <span className="train-kicker"><Target size={15} /> تمرين على محرك القرار الحقيقي</span>
+                  <h3>اختر القرار الذي سيعرضه التطبيق</h3>
+                  <p>لا توجد إجابات مكتوبة يدوياً. بعد اختيارك، يستدعي مركز التدريب دالة القرار نفسها المستخدمة في حفظ السجل، ثم يقارن النتيجة.</p>
+                </div>
+                <div className="train-score train-score--large">
+                  <Trophy size={16} /> {practiceScore} / {answeredCount}
+                </div>
+              </div>
+
+              <nav className="train-case-nav" aria-label="حالات تمرين القرار">
+                {DECISION_PRACTICE_CASES.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={index === practiceCaseIndex ? 'is-active' : ''}
+                    onClick={() => goToPracticeCase(index)}
+                    aria-label={`الحالة ${index + 1}: ${item.title}`}
+                    aria-current={index === practiceCaseIndex ? 'step' : undefined}
+                  >
+                    {index + 1}
+                  </button>
+                ))}
+              </nav>
+
+              <article className="train-case-card">
+                <header>
+                  <span>الحالة {practiceCaseIndex + 1} من {DECISION_PRACTICE_CASES.length}</span>
+                  <h4>{practiceCase.title}</h4>
+                  <p>{practiceCase.story}</p>
+                </header>
+
+                <div className="train-case-inputs">
+                  <div><small>رقمي OD / OS</small><strong dir="ltr">{practiceCase.smartOd} / {practiceCase.smartOs}</strong></div>
+                  <div><small>ورقي OD / OS</small><strong dir="ltr">{practiceCase.paperOd} / {practiceCase.paperOs}</strong></div>
+                  <div><small>Hirschberg</small><strong>{practiceCase.hirschbergMM.toFixed(2)} mm</strong></div>
+                  <div><small>MRD₁</small><strong>{practiceCase.mrd1MM.toFixed(1)} mm</strong></div>
+                  <div><small>الإجهاد</small><strong>{practiceCase.asthenopiaScore} / 5</strong></div>
+                  <div><small>علامات / فرز</small><strong>{practiceCase.externalEyeFindings.map(formatFinding).join('، ') || 'لا شيء'}{practiceCase.diabetes ? ' · سكري' : ''}{practiceCase.eyePain ? ' · ألم حاد' : ''}</strong></div>
+                </div>
+
+                <div className="train-outcome-picker" role="radiogroup" aria-label="القرار المتوقع">
+                  {OUTCOME_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selectedOutcome === option.value}
+                      className={`train-outcome train-outcome--${option.tone}${selectedOutcome === option.value ? ' is-selected' : ''}`}
+                      onClick={() => {
+                        if (answerChecked) return;
+                        setSelectedOutcome(option.value);
+                      }}
+                      disabled={answerChecked}
+                    >
+                      <span className="train-outcome__radio" aria-hidden="true">{selectedOutcome === option.value && <Check size={13} />}</span>
+                      <span>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {!answerChecked ? (
+                  <button
+                    type="button"
+                    className="train-check-answer"
+                    onClick={checkPracticeAnswer}
+                    disabled={!selectedOutcome}
+                  >
+                    <ClipboardCheck size={17} /> تحقق من قراري
+                  </button>
+                ) : (
+                  <div className={`train-verdict train-verdict--${actualOutcome.tone}`} role="status" aria-live="polite">
+                    <div className="train-verdict__head">
+                      {isPracticeCorrect ? <CheckCircle2 size={22} /> : <AlertTriangle size={22} />}
+                      <div>
+                        <span>{isPracticeCorrect ? 'إجابة صحيحة' : 'راجع السبب'}</span>
+                        <strong>{actualOutcome.label}</strong>
+                      </div>
+                    </div>
+                    <p>{engineResult.detailsAr}</p>
+                    <small>إجابتك: {selectedOption?.shortLabel}.</small>
+                  </div>
+                )}
+
+                <div className="train-case-actions">
+                  <button
+                    type="button"
+                    className="train-nav-btn"
+                    onClick={() => goToPracticeCase((practiceCaseIndex - 1 + DECISION_PRACTICE_CASES.length) % DECISION_PRACTICE_CASES.length)}
+                  >
+                    <ChevronRight size={16} /> الحالة السابقة
+                  </button>
+                  <button type="button" className="train-reset" onClick={resetPractice}>
+                    <RotateCcw size={14} /> من البداية
+                  </button>
+                  <button
+                    type="button"
+                    className="train-nav-btn train-nav-btn--primary"
+                    onClick={() => goToPracticeCase((practiceCaseIndex + 1) % DECISION_PRACTICE_CASES.length)}
+                  >
+                    الحالة التالية <ChevronLeft size={16} />
+                  </button>
+                </div>
+              </article>
+            </div>
+          )}
+
+          {mode === 'resources' && (
             <div className="train-resources">
               <div className="train-resources__head">
-                <h3>مرجع الأدلة والروابط الرسمية</h3>
-                <p>كل شيء يعمل دون إنترنت بعد أول تحميل؛ الروابط تفتح عند توفر الشبكة.</p>
+                <span className="train-kicker"><BookOpen size={15} /> مرجع مركز التدريب</span>
+                <h3>أدلة وروابط ووقائع تشغيل</h3>
+                <p>ملخص واضح لما هو منفذ في التطبيق، مع روابط المراجع الرسمية.</p>
               </div>
-              <div className="train-resources__grid">
-                <a className="train-resource-card" href="https://iris.who.int/handle/10665/375590" target="_blank" rel="noopener noreferrer">
-                  <span className="train-resource-card__emoji">🌐</span>
+
+              <div className="train-resource-grid">
+                <a
+                  className="train-resource-card train-resource-card--feature"
+                  href={`${import.meta.env.BASE_URL}guide.html`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className="train-resource-card__icon" aria-hidden="true"><BookOpen size={21} /></span>
+                  <div>
+                    <strong>الدليل المصور الكامل</strong>
+                    <small>يفتح في صفحة مستقلة، ويمكن حفظه أو طباعته من داخل الدليل.</small>
+                  </div>
+                </a>
+                <a
+                  className="train-resource-card"
+                  href="https://iris.who.int/handle/10665/375590"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className="train-resource-card__icon" aria-hidden="true"><Eye size={21} /></span>
                   <div>
                     <strong>WHO 2025 Vision Screening Implementation Handbook</strong>
-                    <small>الدليل الرسمي لمنظمة الصحة العالمية للفحص المدرسي للبصر 2025</small>
+                    <small>الدليل الرسمي لمنظمة الصحة العالمية للفحص المدرسي للبصر.</small>
                   </div>
                 </a>
-                <a className="train-resource-card" href="https://www.equator-network.org/reporting-guidelines/spirit-ai/" target="_blank" rel="noopener noreferrer">
-                  <span className="train-resource-card__emoji">📄</span>
+                <a
+                  className="train-resource-card"
+                  href="https://www.equator-network.org/reporting-guidelines/spirit-ai/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className="train-resource-card__icon" aria-hidden="true"><ClipboardCheck size={21} /></span>
                   <div>
-                    <strong>EQUATOR SPIRIT-AI</strong>
-                    <small>إرشادات التقرير للبحوث السريرية المدعومة بالذكاء الاصطناعي</small>
+                    <strong>EQUATOR · SPIRIT-AI</strong>
+                    <small>إرشادات إعداد تقارير البحوث السريرية المدعومة بالذكاء الاصطناعي.</small>
                   </div>
                 </a>
-                <a className="train-resource-card" href="https://www.equator-network.org/reporting-guidelines/stard-ai/" target="_blank" rel="noopener noreferrer">
-                  <span className="train-resource-card__emoji">🔬</span>
+                <a
+                  className="train-resource-card"
+                  href="https://www.equator-network.org/reporting-guidelines/stard-ai/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className="train-resource-card__icon" aria-hidden="true"><Target size={21} /></span>
                   <div>
-                    <strong>EQUATOR STARD-AI</strong>
-                    <small>معايير تقرير دراسات الدقة التشخيصية بالذكاء الاصطناعي</small>
+                    <strong>EQUATOR · STARD-AI</strong>
+                    <small>معايير الإبلاغ عن دراسات دقة التشخيص بالذكاء الاصطناعي.</small>
                   </div>
                 </a>
-                <button className="train-resource-card train-resource-card--btn" onClick={() => { const a=document.createElement('a'); a.href='./guide.html'; a.download='Al-Basar-Field-Guide.html'; a.click(); }}>
-                  <span className="train-resource-card__emoji">📖</span>
-                  <div>
-                    <strong>دليل الميدان الطلابي</strong>
-                    <small>تحميل نسخة HTML قابلة للطباعة للمراجعة داخل المدرسة</small>
-                  </div>
-                </button>
-                <button className="train-resource-card train-resource-card--btn" onClick={() => {
-                  const blob = new Blob([JSON.stringify({offline:'Al-Basar v3 offline package placeholder', version:'v3'},null,2)], {type:'application/json'});
-                  const url = URL.createObjectURL(blob);
-                  const a=document.createElement('a'); a.href=url; a.download='albasar-offline-package.json'; a.click(); URL.revokeObjectURL(url);
-                }}>
-                  <span className="train-resource-card__emoji">📦</span>
-                  <div>
-                    <strong>حزمة عدم الاتصال Offline</strong>
-                    <small>نسخة احتياطية محلية للتثبيت دون إنترنت</small>
-                  </div>
-                </button>
               </div>
-              <p className="train-resources__note">التطبيق PWA يخزّن واجهة التدريب والمواد الثابتة في Service Worker ليتم الوصول لها بدون شبكة داخل المدارس.</p>
+
+              <div className="train-facts">
+                <div><strong>يعمل دون إنترنت</strong><span>الحفظ المحلي متاح بعد فتح التطبيق؛ المزامنة تحتاج جلسة.</span></div>
+                <div><strong>صور العين خاصة</strong><span>مسار الصورة داخل حسابك، والرابط الموقّع صالح لمدة ساعة.</span></div>
+                <div><strong>السجلات مملوكة للحساب</strong><span>الفاحص يرى سجلاته فقط، بينما يرى المشرف جميع السجلات.</span></div>
+                <div><strong>ليس تشخيصاً</strong><span>غياب إشارة النموذج لا ينفي وجود مشكلة بصرية.</span></div>
+              </div>
+
+              <p className="train-resources__note">
+                هذه أداة فرز مدرسي وتوثيق بحثي. لا تستبدل تقييماً سريرياً مؤهلاً، ولا تشرح قراراً لا يظهر في التطبيق.
+              </p>
             </div>
           )}
         </div>
