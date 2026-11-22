@@ -593,7 +593,13 @@ export default function App() {
     try {
       const pending = records.filter(r => r._syncStatus !== 'synced');
       if (pending.length === 0) {
-        notify(compact ? '✅ تمت المزامنة — لا توجد سجلات معلّقة.' : 'لا توجد سجلات بانتظار المزامنة.', 'success');
+        if (isAdminSession) {
+          // A supervisor's own device usually has nothing to upload. Pull the
+          // examination rows collected by every examiner instead of stopping.
+          await pullLatestFromCloud();
+        } else {
+          notify(compact ? '✅ تمت المزامنة — لا توجد سجلات معلّقة.' : 'لا توجد سجلات بانتظار المزامنة.', 'success');
+        }
         setIsSyncing(false);
         return;
       }
@@ -676,6 +682,12 @@ export default function App() {
         }
       } else {
         notify(`فشلت المزامنة: ${lastError || 'تحقق من الاتصال وإعدادات Supabase.'}`, 'error');
+      }
+
+      if (isAdminSession) {
+        // Refresh the supervisor dataset after an upload so newly synced
+        // examiner rows appear in the live dashboard immediately.
+        await pullLatestFromCloud();
       }
     } catch (e) {
       console.error(e);
