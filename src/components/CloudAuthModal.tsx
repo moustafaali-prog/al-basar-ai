@@ -608,6 +608,40 @@ export const CloudAuthModal: React.FC<CloudAuthModalProps> = ({
             </span>
           </label>
 
+          {mode === 'signin' && (
+            <button
+              type="button"
+              className="auth-link"
+              onClick={async () => {
+                const email = identifier.trim();
+                if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                  setErrorMessage('⚠️ أدخل بريد إلكتروني صالح لطلب إعادة تعيين الرمز السري.');
+                  return;
+                }
+                setSubmitting(true);
+                setErrorMessage('');
+                setInfoMessage('');
+                try {
+                  const { getSupabaseClient } = await import('../utils/supabaseClient');
+                  const client = getSupabaseClient();
+                  if (!client) throw new Error('سحابة المشرف غير مهيأة.');
+                  const { error } = await client.auth.resetPasswordForEmail(email, {
+                    redirectTo: 'https://moustafaali-prog.github.io/al-basar-ai/',
+                  });
+                  if (error) throw error;
+                  setInfoMessage('✅ تم إرسال رابط إعادة تعيين الرمز السري إلى بريدك. افتح الرابط لإنشاء رمز سري جديد.');
+                } catch (err) {
+                  setErrorMessage(friendlyAuthError(err));
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+              disabled={submitting}
+            >
+              نسيت الرمز السري؟
+            </button>
+          )}
+
           {mode === 'signup' && (
             <label className="auth-field">
               <span>تأكيد الرمز السري</span>

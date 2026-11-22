@@ -299,6 +299,10 @@ export default function App() {
   const [sessionActive, setSessionActive] = useState<boolean>(false);
   /** True once the lazy auth bootstrap has finished (or Supabase is absent). */
   const [cloudAuthReady, setCloudAuthReady] = useState<boolean>(!isSupabaseConfigured());
+  /** Password recovery flow active */
+  const [passwordResetMode, setPasswordResetMode] = useState<boolean>(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetError, setResetError] = useState<string>('');
   /** Locally persisted examiner identity (never contains a password). */
   const [examinerProfile, setExaminerProfile] = useState<ExaminerProfile | null>(() => loadExaminerProfile());
   /** True when this device has a biometric credential bound to an examiner. */
@@ -446,6 +450,19 @@ export default function App() {
       window.clearTimeout(timer);
       unsubscribe?.();
     };
+  }, []);
+
+  // Detect password recovery flow from Supabase redirect
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const search = new URLSearchParams(window.location.search);
+    const type = params.get('type') || search.get('type');
+    if (type === 'recovery') {
+      setPasswordResetMode(true);
+      // Clean URL to avoid re-trigger
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash.replace(/([&?])type=recovery/, ''));
+    }
   }, []);
 
   useEffect(() => {
@@ -2177,6 +2194,62 @@ export default function App() {
         onClose={handleCloseCloudLogin}
         onSignedIn={handleCloudSignedIn}
       />
+
+      {passwordResetMode && (
+        <div className="feedback-dialog-backdrop" style={{zIndex: 10000}}>
+          <section className="auth-dialog auth-dialog--minimal" role="dialog" aria-modal="true">
+            <header className="auth-dialog__header">
+              <h2>إعادة تعيين الرمز السري</h2>
+              <p>أدخل رمزاً سرياً جديداً لحسابك.</p>
+            </header>
+            <div className="auth-dialog__body">
+              <label className="auth-field">
+                <span>الرمز السري الجديد</span>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="••••••••"
+                  minLength={6}
+                />
+              </label>
+              {resetError && <p className="auth-dialog__error">{resetError}</p>}
+              <button
+                className="m3-btn m3-btn--primary m3-btn--block"
+                onClick={async () => {
+                  setResetError('');
+                  if (newPassword.length < 6) {
+                    setResetError('الرمز السري يجب أن يكون 6 أحرف على الأقل.');
+                    return;
+                  }
+                  try {
+                    const { getSupabaseClient } = await import('./utils/supabaseClient');
+                    const client = getSupabaseClient();
+                    if (!client) throw new Error('سحابة المشرف غير مهيأة.');
+                    const { error } = await client.auth.updateUser({ password: newPassword });
+                    if (error) throw error;
+                    setPasswordResetMode(false);
+                    setNewPassword('');
+                    // Notify user
+                    window.alert('تم تغيير الرمز السري بنجاح. سجّل الدخول بالرمز الجديد.');
+                  } catch (err: any) {
+                    setResetError(err.message || 'تعذر تغيير الرمز السري.');
+                  }
+                }}
+              >
+                حفظ الرمز السري الجديد
+              </button>
+              <button
+                type="button"
+                className="auth-dialog__skip"
+                onClick={() => setPasswordResetMode(false)}
+              >
+                إلغاء
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <footer className="app-footer">
         <p><strong>منظومة البصر</strong> · تسجيل وفحص بصري أولي للمشروع البحثي. <a href={`${import.meta.env.BASE_URL}guide.html`} target="_blank" rel="noopener">الدليل المصور والتدريبي</a>.</p>
