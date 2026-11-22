@@ -722,6 +722,16 @@ export default function App() {
     }
   };
 
+  // When a supervisor opens the live dashboard, immediately pull records that
+  // examiner devices have already synced instead of showing only this browser's
+  // local dataset.
+  useEffect(() => {
+    if (!adminOpen || adminPanel !== 'dashboard' || !isAdminSession) return;
+    if (!isOnline || !isSupabaseConfigured()) return;
+    void pullLatestFromCloud();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminOpen, adminPanel, isAdminSession]);
+
   const handleUpdateRecord = (updated: StudentScreeningRecord) => {
     const pendingRecord: StudentScreeningRecord = { ...updated, _syncStatus: 'pending' };
     const updatedList = records.map((r) => (r.Child_ID === updated.Child_ID ? pendingRecord : r));

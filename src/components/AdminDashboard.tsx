@@ -63,6 +63,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [photoUrls, setPhotoUrls] = useState<PhotoMap>({});
   const [previewPath, setPreviewPath] = useState<string | null>(null);
 
+  // Pull the cloud dataset every time the supervisor opens the dashboard, so
+  // records synced by examiner devices appear without a manual refresh.
+  useEffect(() => {
+    if (onRefresh) void onRefresh();
+  }, []);
+
   const schools = useMemo(
     () => Array.from(new Set(records.map((r) => (r.School_Name ?? '').trim()).filter(Boolean))).sort(),
     [records],
