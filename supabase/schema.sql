@@ -13,6 +13,7 @@
 
 create table if not exists public.student_screening_records (
   child_id text primary key,
+  child_name text,
   examiner_id text not null,
   paper_examiner_id text,
   paper_started_at timestamptz,
@@ -140,7 +141,8 @@ alter table public.student_screening_records
   add column if not exists eye_photo_url text,
   add column if not exists examination_date timestamptz,
   add column if not exists owner_id uuid default auth.uid(),
-  add column if not exists updated_at timestamptz not null default now();
+  add column if not exists updated_at timestamptz not null default now(),
+  add column if not exists child_name text;
 
 -- ---------------------------------------------------------------------------
 -- 🔧 تصحيح نوع عمودَي الزمن (SQLSTATE 22P02)

@@ -664,10 +664,10 @@ export default function App() {
         }
 
         try {
-          // The owner is the signed-in account, unless the row already
-          // belongs to another examiner (e.g. a supervisor editing a field
-          // record) — in that case the original owner is preserved.
-          const diag = await upsertScreeningRecord(rec, rec.Owner_ID || cloudUser.id);
+          // Always attribute the row to the currently signed-in examiner.
+          // This prevents stale local Owner_ID values from breaking RLS.
+          rec.Owner_ID = cloudUser.id;
+          const diag = await upsertScreeningRecord(rec, cloudUser.id);
           diag.droppedColumns?.forEach((column) => droppedColumns.add(column));
           syncedIds.add(rec.Child_ID);
           syncedCount++;

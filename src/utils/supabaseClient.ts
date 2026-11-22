@@ -179,6 +179,7 @@ export function mapRecordToSupabaseRow(
 ): Record<string, unknown> {
   return {
     child_id: record.Child_ID,
+    child_name: n(record.Child_Name),
     owner_id: ownerId ?? n(record.Owner_ID),
     examiner_id: record.Examiner_ID,
     examiner_full_name: n(record.Examiner_Full_Name),
@@ -261,6 +262,7 @@ export function mapSupabaseRowToRecord(row: Record<string, unknown>): StudentScr
 
   return {
     Child_ID: String(row.child_id ?? ''),
+    Child_Name: str(row.child_name),
     Examiner_ID: String(row.examiner_id ?? ''),
     Examiner_Full_Name: str(row.examiner_full_name),
     Device_ID: str(row.device_id),

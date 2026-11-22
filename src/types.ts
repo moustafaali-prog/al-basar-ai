@@ -45,6 +45,7 @@ export interface WHOScreeningAssessment {
 
 export interface StudentScreeningRecord {
   Child_ID: string;
+  Child_Name?: string;
   Examiner_ID: string;
   /** Full triple name of the examiner on duty (e.g. "أحمد محمد علي"). */
   Examiner_Full_Name?: string;
