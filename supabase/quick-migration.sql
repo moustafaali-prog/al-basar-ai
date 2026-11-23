@@ -15,7 +15,7 @@
 --
 -- ✅ سياسات جدول السجلات الآن مقيّدة بـ owner_id = auth.uid():
 --    كل فاحص يرى سجلاته فقط، والمشرف (app_metadata.role = 'admin') يرى الكل.
---    لا توجد سياسة DELETE إطلاقاً.
+--    الحذف متاح للمشرف فقط عبر albasar_delete_admin_only.
 --
 -- ✅ حاوية الصور private (public = false) — أخلاقيات البحث (IRB):
 --    صور عيون الأطفال بيانات بيومترية حساسة؛ لا تُقرأ إلا عبر Signed URL
@@ -48,6 +48,7 @@ begin
   end if;
 
   alter table public.student_screening_records
+    add column if not exists child_name text,
     add column if not exists external_eye_findings jsonb default '[]'::jsonb,
     add column if not exists eye_photo_url text,
     add column if not exists owner_id uuid default auth.uid(),
@@ -78,6 +79,7 @@ begin
   drop policy if exists "albasar_select_own_or_admin" on public.student_screening_records;
   drop policy if exists "albasar_insert_own_or_admin" on public.student_screening_records;
   drop policy if exists "albasar_update_own_or_admin" on public.student_screening_records;
+  drop policy if exists "albasar_delete_admin_only" on public.student_screening_records;
 
   -- الفاحص يرى/يضيف/يحدث سجلاته فقط، والمشرف يرى ويدير كل سجلات الطلبة.
   create policy "albasar_select_own_or_admin"
@@ -96,6 +98,12 @@ begin
     using (owner_id = auth.uid() or public.is_albasar_admin())
     with check (owner_id = auth.uid() or public.is_albasar_admin());
 
+  -- سياسة حذف للإداريين فقط
+  create policy "albasar_delete_admin_only"
+    on public.student_screening_records for delete
+    to authenticated
+    using (public.is_albasar_admin());
+
   -- 🔒 سحب صلاحيات anon من جدول السجلات (دفاع في العمق):
   --    RLS هي الحاجز الحقيقي (لا توجد أي سياسة لـ anon)، لكن سحب GRANT
   --    يجعل التبويق واضحاً: المفتاح المنشور لا يفتح جدول التلاميذ إطلاقاً.
@@ -103,8 +111,8 @@ begin
   revoke all on public.student_screening_records from anon;
 end $$;
 
--- لا توجد سياسة DELETE — وبما أن RLS denies افتراضياً، فالحذف ممنوع
--- حتى على مستوى الدور الإداري. حمايتان: RLS + غياب صلاحية DELETE.
+-- سياسة DELETE موجودة الآن للإداريين فقط عبر "albasar_delete_admin_only".
+-- الحذف ممنوع على غير الإداريين؛ RLS يمنع الوصول افتراضياً.
 
 -- ---------- 4) حاوية صور العين (خاصة تماماً) ----------
 -- المسار المعتمد في imageCompress.ts هو: {authUserId}/{childId}/{timestamp}.jpg

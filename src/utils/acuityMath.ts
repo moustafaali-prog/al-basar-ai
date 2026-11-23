@@ -279,6 +279,7 @@ export function generateSPSS_CSV(records: StudentScreeningRecord[]): string {
   const quote = (value: string | undefined) => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const headers = [
     'Child_ID',
+    'Child_Name',
     'Examiner_ID',
     'Examiner_Full_Name',
     'Device_ID',
@@ -322,6 +323,12 @@ export function generateSPSS_CSV(records: StudentScreeningRecord[]): string {
     'Referral_PHCC',
     'FollowUp_Status',
     'Spectacles_Prescribed_Fitted',
+    'External_Eye_Findings',
+    'Eye_Photo_URL',
+    'WHO_PreScreen_Summary',
+    'Child_Assent',
+    'PreScreen_Diabetes',
+    'PreScreen_Eye_Pain',
     'Gold_Standard_Confirmed',
     'Gold_Standard_Method',
     'Gold_Standard_Examiner_ID',
@@ -332,6 +339,7 @@ export function generateSPSS_CSV(records: StudentScreeningRecord[]): string {
 
   const rows = records.map(r => [
     quote(r.Child_ID),
+    quote(r.Child_Name),
     quote(r.Examiner_ID),
     quote(r.Examiner_Full_Name),
     quote(r.Device_ID),
@@ -376,6 +384,14 @@ export function generateSPSS_CSV(records: StudentScreeningRecord[]): string {
     quote(r.Referral_PHCC),
     r.FollowUp_Status,
     r.Spectacles_Prescribed_Fitted ?? '',
+    quote((r.WHO_Screening?.externalEyeFindings ?? []).join(';') || 'NONE'),
+    quote(r.Eye_Photo_URL || 'NONE'),
+    quote(r.WHO_PreScreen
+      ? `Assent:${r.WHO_PreScreen.childAssent};Diabetes:${r.WHO_PreScreen.diabetes};EyePain:${r.WHO_PreScreen.eyePainOrSevereItch};ParentVision:${r.WHO_PreScreen.parentVisionConcern};TeacherVision:${r.WHO_PreScreen.teacherVisionConcern};Learning:${r.WHO_PreScreen.learningConcern};Spectacles:${r.WHO_PreScreen.spectacles}`
+      : 'NONE'),
+    quote(r.Child_Assent || r.WHO_PreScreen?.childAssent || ''),
+    quote(r.WHO_PreScreen?.diabetes || ''),
+    quote(r.WHO_PreScreen?.eyePainOrSevereItch || ''),
     r.Gold_Standard_Confirmed ?? 99,
     quote(r.Gold_Standard_Method),
     quote(r.Gold_Standard_Examiner_ID),

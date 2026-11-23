@@ -321,14 +321,19 @@ create policy "albasar_update_own_or_admin"
   using (owner_id = auth.uid() or public.is_albasar_admin())
   with check (owner_id = auth.uid() or public.is_albasar_admin());
 
--- There is intentionally NO delete policy: RLS denies by default, so a
--- synced research record can never be removed — not even by a supervisor.
--- ALCOA+ / SPIRIT-AI audit trail is preserved.
+-- Admin-only DELETE policy (ALCOA+ audit trail allows admin correction only).
+-- RLS denies by default for non-admins, preserving audit trail.
+drop policy if exists "albasar_delete_admin_only" on public.student_screening_records;
+create policy "albasar_delete_admin_only"
+  on public.student_screening_records
+  for delete
+  to authenticated
+  using (public.is_albasar_admin());
 
 -- Table privileges are separate from RLS policies. Without these GRANTs the
 -- Data API returns "permission denied for table" even when policies exist.
 -- Only `authenticated` is granted here; `anon` is intentionally left out.
-grant select, insert, update on public.student_screening_records to authenticated;
+grant select, insert, update, delete on public.student_screening_records to authenticated;
 revoke all on public.student_screening_records from anon;
 
 -- =========================================================
