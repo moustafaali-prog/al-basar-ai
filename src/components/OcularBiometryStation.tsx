@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -45,7 +45,7 @@ type ExtendedTrackConstraintSet = MediaTrackConstraintSet & {
   focusMode?: string;
   exposureMode?: string;
   whiteBalanceMode?: string;
-  /** Rear-camera torch (flash) ظ¤ present on `MediaTrackSupportedConstraints` only. */
+  /** Rear-camera torch (flash) — present on `MediaTrackSupportedConstraints` only. */
   torch?: boolean;
 };
 
@@ -102,7 +102,7 @@ const captureVideoFrame = (video: HTMLVideoElement): HTMLCanvasElement | null =>
 const canvasToImage = (canvas: HTMLCanvasElement): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
   const image = new Image();
   image.onload = () => resolve(image);
-  image.onerror = () => reject(new Error('╪ز╪╣╪░╪▒ ╪ز╪ش┘ç┘è╪▓ ┘à╪╣╪د┘è┘╪ر ╪د┘╪╡┘ê╪▒╪ر ╪د┘┘à┘╪ز┘é╪╖╪ر.'));
+  image.onerror = () => reject(new Error('تعذر تجهيز معاينة الصورة الملتقطة.'));
   image.src = canvas.toDataURL('image/png');
 });
 
@@ -191,19 +191,19 @@ interface OcularApplyResult {
  * mandates a standard (2-week PHCC) referral.
  */
 const EYE_FINDINGS = [
-  { id: 'LEUKOCORIA', short: '╪د┘╪╣┘â╪د╪│ ╪ص╪»┘é┘è ╪ث╪ذ┘è╪╢ / ╪║┘è╪▒ ╪╖╪ذ┘è╪╣┘è', tone: 'urgent' },
-  { id: 'CORNEAL_HAZINESS', short: '╪╣╪ز╪د┘à╪ر ╪ث┘ê ╪ز┘╪»╪ذ ╪د┘┘é╪▒┘┘è╪ر', tone: 'urgent' },
-  { id: 'SCLERAL_REDNESS', short: '╪د╪ص┘à╪▒╪د╪▒ ┘à┘╪ز╪ص┘à╪ر ╪ص╪د╪» ╪ث┘ê ╪ح┘╪▒╪د╪▓╪د╪ز ┘é┘è╪ص┘è╪ر', tone: 'warn' },
-  { id: 'ANISOCORIA', short: '╪ز┘╪د┘ê╪ز ┘ê╪د╪╢╪ص ┘┘è ╪ص╪ش┘à ╪د┘╪ص╪»┘é╪ز┘è┘', tone: 'urgent' },
-  { id: 'EYE_MISALIGNMENT', short: '╪د┘╪ص╪▒╪د┘ ╪ث┘ê ╪ص┘ê┘ ╪╕╪د┘ç╪▒ ╪ذ╪د┘╪╣┘è┘ ╪د┘┘à╪ش╪▒╪»╪ر', tone: 'urgent' },
+  { id: 'LEUKOCORIA', short: 'انعكاس حدقي أبيض / غير طبيعي', tone: 'urgent' },
+  { id: 'CORNEAL_HAZINESS', short: 'عتامة أو تندب القرنية', tone: 'urgent' },
+  { id: 'SCLERAL_REDNESS', short: 'احمرار ملتحمة حاد أو إفرازات قيحية', tone: 'warn' },
+  { id: 'ANISOCORIA', short: 'تفاوت واضح في حجم الحدقتين', tone: 'urgent' },
+  { id: 'EYE_MISALIGNMENT', short: 'انحراف أو حول ظاهر بالعين المجردة', tone: 'urgent' },
 ] as const;
 
 const ASTHENOPIA_SIGNS = [
-  { key: 'squint', label: '╪ز╪║┘à┘è╪╢ ┘à╪ز┘â╪▒╪▒ ╪╣┘╪» ╪د┘┘╪╕╪▒ ┘┘╪ث┘à╪د┘à' },
-  { key: 'tilt', label: '╪ح┘à╪د┘╪ر ╪د┘╪▒╪ث╪│ ╪ذ╪┤┘â┘ ┘à┘╪ص┘ê╪╕' },
-  { key: 'rub', label: '┘╪▒┘â ╪د┘╪╣┘è┘┘è┘ ╪ذ┘â╪س╪▒╪ر' },
-  { key: 'close', label: '╪د┘╪د┘é╪ز╪▒╪د╪ذ ┘â╪س┘è╪▒╪د┘ï ┘à┘ ╪د┘╪┤╪د╪┤╪ر / ╪د┘┘┘ê╪ص' },
-  { key: 'headache', label: '╪╡╪»╪د╪╣ ╪ث┘ê ╪ح╪ش┘ç╪د╪» ╪ذ╪╡╪▒┘è ╪ذ╪╣╪» ╪د┘┘é╪▒╪د╪ة╪ر' },
+  { key: 'squint', label: 'تغميض متكرر عند النظر للأمام' },
+  { key: 'tilt', label: 'إمالة الرأس بشكل ملحوظ' },
+  { key: 'rub', label: 'فرك العينين بكثرة' },
+  { key: 'close', label: 'الاقتراب كثيراً من الشاشة / اللوح' },
+  { key: 'headache', label: 'صداع أو إجهاد بصري بعد القراءة' },
 ] as const;
 
 interface ClinicalPreset {
@@ -219,8 +219,8 @@ interface ClinicalPreset {
 const CLINICAL_PRESETS: ClinicalPreset[] = [
   {
     id: 'normal',
-    emoji: 'ظ£à',
-    label: '╪╖╪ذ┘è╪╣┘è ┘à╪ذ╪»╪خ┘è╪د┘ï',
+    emoji: '✅',
+    label: 'طبيعي مبدئياً',
     detail: 'Hirschberg < 0.5mm | MRD1 = 4.0mm',
     tone: 'pass',
     hirschbergMM: 0,
@@ -228,17 +228,17 @@ const CLINICAL_PRESETS: ClinicalPreset[] = [
   },
   {
     id: 'strabismus',
-    emoji: 'ظأبي╕',
-    label: '╪د╪┤╪ز╪ذ╪د┘ç ╪ص┘┘ê┘┘',
-    detail: 'Hirschberg ظëح 1.0mm / ظëح 15PD',
+    emoji: '⚠️',
+    label: 'اشتباه حَوَل',
+    detail: 'Hirschberg ≥ 1.0mm / ≥ 15PD',
     tone: 'warn',
     hirschbergMM: 1.0,
     mrd1MM: 4.0,
   },
   {
     id: 'ptosis',
-    emoji: '≡اأذ',
-    label: '╪د╪┤╪ز╪ذ╪د┘ç ╪ز╪»┘┘è ╪ش┘┘',
+    emoji: '🚨',
+    label: 'اشتباه تدلي جفن',
     detail: 'MRD1 < 2.5mm',
     tone: 'urgent',
     hirschbergMM: 0,
@@ -325,7 +325,7 @@ const toEyeLandmarks = (
   };
 };
 
-const formatMM = (value: number): string => Number.isFinite(value) ? value.toFixed(2) : 'ظ¤';
+const formatMM = (value: number): string => Number.isFinite(value) ? value.toFixed(2) : '—';
 
 export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   hirschbergMM,
@@ -502,7 +502,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       computeMRD1FromLandmarks(os, source.mmPerPx),
     ].filter((value): value is number => value !== null);
 
-    // MRDظé is only committed when a lid margin was actually detected or tapped.
+    // MRD₁ is only committed when a lid margin was actually detected or tapped.
     // Never fabricate a lid distance from a missing landmark.
     const mrdAvailable = mrdCandidates.length > 0;
     const validated = validateOcularRanges(
@@ -518,7 +518,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       setMrd1Recorded(true);
     } else if (!mrd1Recorded && !lidWarningShownRef.current) {
       lidWarningShownRef.current = true;
-      notify('┘┘à ┘è╪ز┘à ╪ز╪ص╪»┘è╪» ╪ص╪» ╪د┘╪ش┘┘ ╪د┘╪╣┘┘ê┘è ظ¤ ╪د┘┘à╪│ ┘┘é╪╖╪ر ┬س╪ص╪» ╪د┘╪ش┘┘┬╗ ╪ث┘ê ╪د╪╢╪ذ╪╖ MRDظé ┘à┘ ╪د┘╪╢╪ذ╪╖ ╪د┘┘è╪»┘ê┘è.', 'info');
+      notify('لم يتم تحديد حد الجفن العلوي — المس نقطة «حد الجفن» أو اضبط MRD₁ من الضبط اليدوي.', 'info');
     }
 
     setAIQualityFlag(manual ? 3 : (hadRetakeRef.current ? 2 : 1));
@@ -548,7 +548,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setAnalysis(result);
     setAuditPoints(nextPoints);
 
-    // Soft quality advisory ظ¤ never a gate.
+    // Soft quality advisory — never a gate.
     const advisory = result.isBlurred
       ? QUALITY_MESSAGE_BLUR
       : result.hasGlare
@@ -562,30 +562,30 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
     if (!outcome.applied) {
       setAutoStatus('error');
-      setAutoMessage('┘┘à ┘╪ز┘à┘â┘ ┘à┘ ╪د┘╪ز╪╣╪▒┘ ╪╣┘┘ë ╪د┘╪ص╪»┘é╪ر ┘ê╪د┘╪د┘╪╣┘â╪د╪│ ╪ز┘┘é╪د╪خ┘è╪د┘ï ظ¤ ╪د┘┘à╪│ ╪د┘╪╡┘ê╪▒╪ر ┘╪ز╪ص╪»┘è╪» ╪د┘┘┘é╪د╪╖ ┘è╪»┘ê┘è╪د┘ï.');
+      setAutoMessage('لم نتمكن من التعرف على الحدقة والانعكاس تلقائياً — المس الصورة لتحديد النقاط يدوياً.');
       setHirschbergRecorded(false);
       setMrd1Recorded(false);
       setAIQualityFlag(0);
-      notify('╪د╪│╪ز╪«╪»┘à ╪د┘╪ز╪ص╪»┘è╪» ╪د┘┘è╪»┘ê┘è ╪╣┘┘ë ╪د┘╪╡┘ê╪▒╪ر ┘╪ز╪ص╪»┘è╪» ╪د┘╪ص╪»┘é╪ر ┘ê╪د┘╪د┘╪╣┘â╪د╪│.', 'info');
+      notify('استخدم التحديد اليدوي على الصورة لتحديد الحدقة والانعكاس.', 'info');
       return false;
     }
 
     setAutoStatus('done');
     setAutoMessage(manual
-      ? 'ظأة ╪ز┘à ╪د╪╣╪ز┘à╪د╪» ╪د┘┘é┘è╪د╪│╪د╪ز ┘à┘ ╪د┘╪ز╪ص╪»┘è╪» ╪د┘┘è╪»┘ê┘è.'
+      ? '⚡ تم اعتماد القياسات من التحديد اليدوي.'
       : burstCount > 1
         ? !outcome.mrdAvailable
-          ? `ظ£à ╪ز┘à ╪»┘à╪ش ${burstCount} ╪ح╪╖╪د╪▒╪د╪ز ┘ê╪ص╪│╪د╪ذ Hirschberg. ┘┘à ┘è╪ز┘à ╪د┘╪ز╪╣╪▒┘ ╪╣┘┘ë ╪ص╪» ╪د┘╪ش┘┘ ظ¤ ╪د╪╢╪ذ╪╖ MRDظé ┘è╪»┘ê┘è╪د┘ï.`
-          : `ظ£à ╪ز┘à ╪»┘à╪ش ${burstCount} ╪ح╪╖╪د╪▒╪د╪ز ┘â╪د┘à┘╪ر ╪د┘╪»┘é╪ر (┘à╪ز┘ê╪│╪╖ ┘à┘â╪د┘┘è) ┘ê╪د╪╣╪ز┘à╪د╪» ╪د┘┘é┘è┘à. ╪▒╪د╪ش╪╣┘ç╪د ┘é╪ذ┘ ╪د┘┘à╪ز╪د╪ذ╪╣╪ر.`
+          ? `✅ تم دمج ${burstCount} إطارات وحساب Hirschberg. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.`
+          : `✅ تم دمج ${burstCount} إطارات كاملة الدقة (متوسط مكاني) واعتماد القيم. راجعها قبل المتابعة.`
         : !outcome.mrdAvailable
-          ? 'ظ£à ╪ز┘à ╪ص╪│╪د╪ذ Hirschberg ╪ز┘┘é╪د╪خ┘è╪د┘ï. ┘┘à ┘è╪ز┘à ╪د┘╪ز╪╣╪▒┘ ╪╣┘┘ë ╪ص╪» ╪د┘╪ش┘┘ ظ¤ ╪د╪╢╪ذ╪╖ MRDظé ┘è╪»┘ê┘è╪د┘ï.'
+          ? '✅ تم حساب Hirschberg تلقائياً. لم يتم التعرف على حد الجفن — اضبط MRD₁ يدوياً.'
           : hadRetakeRef.current
-            ? 'ظ£à ╪ز┘à ╪ز╪ص┘┘è┘ ╪د┘╪╡┘ê╪▒╪ر ┘ê╪ح╪╣╪د╪»╪ر ╪╢╪ذ╪╖ ╪د┘┘é┘è┘à (┘à╪ص╪د┘ê┘╪ر ╪س╪د┘┘è╪ر).'
-            : 'ظ£à ╪ز┘à ╪ز╪ص┘┘è┘ ╪د┘╪╡┘ê╪▒╪ر ╪ز┘┘é╪د╪خ┘è╪د┘ï ┘ê╪د╪╣╪ز┘à╪د╪» ╪د┘┘é┘è┘à. ╪▒╪د╪ش╪╣┘ç╪د ┘é╪ذ┘ ╪د┘┘à╪ز╪د╪ذ╪╣╪ر.');
+            ? '✅ تم تحليل الصورة وإعادة ضبط القيم (محاولة ثانية).'
+            : '✅ تم تحليل الصورة تلقائياً واعتماد القيم. راجعها قبل المتابعة.');
     notify(
       burstCount > 1
-        ? `╪ز┘à ╪»┘à╪ش ${burstCount} ╪ح╪╖╪د╪▒╪د╪ز ┘â╪د┘à┘╪ر ╪د┘╪»┘é╪ر ┘ê╪ز╪ص╪»┘è╪س ╪د┘┘é┘è╪د╪│╪د╪ز ╪د┘╪ذ╪╡╪▒┘è╪ر. ╪▒╪د╪ش╪╣ ╪د┘┘é┘è┘à ┘é╪ذ┘ ╪د┘┘à╪ز╪د╪ذ╪╣╪ر.`
-        : '╪ز┘à ╪ز╪ص╪»┘è╪س ╪د┘┘é┘è╪د╪│╪د╪ز ╪د┘╪ذ╪╡╪▒┘è╪ر. ╪▒╪د╪ش╪╣ ╪د┘┘é┘è┘à ┘é╪ذ┘ ╪د┘┘à╪ز╪د╪ذ╪╣╪ر.',
+        ? `تم دمج ${burstCount} إطارات كاملة الدقة وتحديث القياسات البصرية. راجع القيم قبل المتابعة.`
+        : 'تم تحديث القياسات البصرية. راجع القيم قبل المتابعة.',
       'success',
     );
     return true;
@@ -602,7 +602,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     manual = false,
   ) => {
     if (!image) {
-      notify('┘è╪▒╪ش┘ë ╪د┘╪ز┘é╪د╪╖ ╪╡┘ê╪▒╪ر ╪ث┘ê ╪د╪«╪ز┘è╪د╪▒ ╪╡┘ê╪▒╪ر ╪ث┘ê┘╪د┘ï.', 'info');
+      notify('يرجى التقاط صورة أو اختيار صورة أولاً.', 'info');
       return;
     }
 
@@ -615,7 +615,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : '╪ز╪╣╪░╪▒ ╪ز╪ص┘┘è┘ ╪د┘╪╡┘ê╪▒╪ر. ╪ص╪د┘ê┘ ┘à╪▒╪ر ╪ث╪«╪▒┘ë ╪ث┘ê ╪د╪│╪ز╪«╪»┘à ╪د┘╪ز╪ص╪»┘è╪» ╪د┘┘è╪»┘ê┘è.';
+        : 'تعذر تحليل الصورة. حاول مرة أخرى أو استخدم التحديد اليدوي.';
       setAutoStatus('error');
       setAutoMessage(message);
       setQualityState('idle');
@@ -636,7 +636,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   ]);
 
   /**
-   * Produces the diagnostic-clarity JPEG (1024 px / q 0.85 => ~80ظô150 KB) and
+   * Produces the diagnostic-clarity JPEG (1024 px / q 0.85 => ~80–150 KB) and
    * hands it to App.tsx, which stores it in IndexedDB keyed by the Child_ID and
    * uploads it to Supabase Storage on the next sync. The blob never enters
    * localStorage, so the offline record store stays small.
@@ -660,7 +660,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setQualityState('idle');
     setQualityMessage('');
     setAutoStatus('scanning');
-    setAutoMessage('╪ش╪د╪▒┘ ╪ز╪ص┘┘è┘ ╪ش┘ê╪»╪ر ╪د┘╪╡┘ê╪▒╪ر ┘ê╪د┘┘┘é╪د╪╖ ╪د┘╪ز╪┤╪▒┘è╪ص┘è╪ر...');
+    setAutoMessage('جارٍ تحليل جودة الصورة والنقاط التشريحية...');
     setAIQualityFlag(0);
     setHirschbergRecorded(false);
     setMrd1Recorded(false);
@@ -766,7 +766,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   }, []);
 
   /**
-   * Frame-to-frame luminance differencing on a tiny 80├ù45 sample. It detects
+   * Frame-to-frame luminance differencing on a tiny 80×45 sample. It detects
    * camera shake and exposure jumps without touching the full-resolution
    * capture path, then locks AE/AF when the scene has been stable long enough.
    */
@@ -883,7 +883,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const startCamera = async (facing: 'user' | 'environment' = cameraFacingMode) => {
     if (cameraStarting || burstActiveRef.current) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      const message = '╪ز╪╣╪░╪▒ ╪د┘┘ê╪╡┘ê┘ ╪ح┘┘ë ╪د┘┘â╪د┘à┘è╪▒╪د ╪╣┘┘ë ┘ç╪░╪د ╪د┘┘à╪ز╪╡┘╪ص. ╪د╪│╪ز╪«╪»┘à ╪▓╪▒ ╪▒┘╪╣ ╪د┘╪╡┘ê╪▒╪ر ╪ذ╪»┘╪د┘ï ┘à┘┘ç╪د.';
+      const message = 'تعذر الوصول إلى الكاميرا على هذا المتصفح. استخدم زر رفع الصورة بدلاً منها.';
       setCameraError(message);
       notify(message, 'error');
       return;
@@ -915,7 +915,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       const video = videoRef.current;
       if (!video) {
         stream.getTracks().forEach((track) => track.stop());
-        const message = '╪ز╪╣╪░╪▒ ╪ز╪ش┘ç┘è╪▓ ┘à╪╣╪د┘è┘╪ر ╪د┘┘â╪د┘à┘è╪▒╪د. ╪د╪│╪ز╪«╪»┘à ╪▓╪▒ ╪▒┘╪╣ ╪د┘╪╡┘ê╪▒╪ر.';
+        const message = 'تعذر تجهيز معاينة الكاميرا. استخدم زر رفع الصورة.';
         setCameraError(message);
         notify(message, 'error');
         return;
@@ -939,7 +939,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       cameraCapabilitiesRef.current = null;
       cameraLockedRef.current = false;
       setCameraLockLabel('');
-      const message = '╪ز╪╣╪░╪▒ ┘╪ز╪ص ╪د┘┘â╪د┘à┘è╪▒╪د. ╪ز╪ص┘é┘é ┘à┘ ╪د┘╪╡┘╪د╪ص┘è╪د╪ز ╪ث┘ê ╪د╪│╪ز╪«╪»┘à ╪▒┘╪╣ ╪د┘╪╡┘ê╪▒╪ر.';
+      const message = 'تعذر فتح الكاميرا. تحقق من الصلاحيات أو استخدم رفع الصورة.';
       setCameraError(message);
       notify(message, 'error');
     } finally {
@@ -960,7 +960,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
   const capturePhoto = async () => {
     const video = videoRef.current;
     if (!video || !video.videoWidth) {
-      notify('╪د┘╪ز╪╕╪▒ ╪س╪د┘┘è╪ر ╪ص╪ز┘ë ╪ز╪ذ╪»╪ث ┘à╪╣╪د┘è┘╪ر ╪د┘┘â╪د┘à┘è╪▒╪د.', 'info');
+      notify('انتظر ثانية حتى تبدأ معاينة الكاميرا.', 'info');
       return;
     }
     if (burstActiveRef.current) return;
@@ -970,7 +970,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setIsShutterActive(true);
     window.setTimeout(() => setIsShutterActive(false), 220);
     setAutoStatus('scanning');
-    setAutoMessage(`╪ش╪د╪▒┘ ╪د┘╪ز┘é╪د╪╖ ${BURST_FRAME_COUNT} ╪ح╪╖╪د╪▒╪د╪ز ┘â╪د┘à┘╪ر ╪د┘╪»┘é╪ر ┘ê╪»┘à╪ش┘ç╪د ┘à┘â╪د┘┘è╪د┘ï...`);
+    setAutoMessage(`جارٍ التقاط ${BURST_FRAME_COUNT} إطارات كاملة الدقة ودمجها مكانياً...`);
 
     try {
       if (!cameraLockedRef.current) {
@@ -985,10 +985,10 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
         if (frame) frames.push(frame);
       }
       if (frames.length === 0) {
-        throw new Error('╪ز╪╣╪░╪▒ ╪د┘╪ز┘é╪د╪╖ ╪ح╪╖╪د╪▒ ╪╡╪د┘╪ص ┘à┘ ╪د┘┘â╪د┘à┘è╪▒╪د. ╪ث╪╣╪» ╪د┘┘à╪ص╪د┘ê┘╪ر ╪ث┘ê ╪د╪│╪ز╪«╪»┘à ╪▒┘╪╣ ╪د┘╪╡┘ê╪▒╪ر.');
+        throw new Error('تعذر التقاط إطار صالح من الكاميرا. أعد المحاولة أو استخدم رفع الصورة.');
       }
 
-      setAutoMessage(`╪ش╪د╪▒┘ ╪ز╪ص┘┘è┘ ${frames.length} ╪ح╪╖╪د╪▒╪د╪ز ┘ê╪د╪│╪ز╪«╪▒╪د╪ش ╪د┘╪ص╪»┘é╪ر ┘ê╪د┘╪د┘╪╣┘â╪د╪│...`);
+      setAutoMessage(`جارٍ تحليل ${frames.length} إطارات واستخراج الحدقة والانعكاس...`);
       await waitFor(0);
       const analyses = frames.map((frame) => analyzeOcularFrame(frame));
       const merged = mergeOcularAnalyses(analyses);
@@ -1012,7 +1012,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       setMrd1Recorded(false);
       lidWarningShownRef.current = false;
       setAutoStatus('scanning');
-      setAutoMessage(`╪ز┘à ╪»┘à╪ش ${frames.length} ╪ح╪╖╪د╪▒╪د╪ز ظ¤ ╪ش╪د╪▒┘ ╪ز╪╖╪ذ┘è┘é ╪ذ┘ê╪د╪ذ╪ر ╪د┘╪ش┘ê╪»╪ر...`);
+      setAutoMessage(`تم دمج ${frames.length} إطارات — جارٍ تطبيق بوابة الجودة...`);
       await waitFor(0);
       // The photo is always captured with a single tap: compress the sharpest
       // full-resolution frame straight away, before any quality advisory.
@@ -1021,7 +1021,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : '╪ز╪╣╪░╪▒ ╪د┘╪ز┘é╪د╪╖ ╪د┘╪╡┘ê╪▒╪ر. ╪ص╪د┘ê┘ ┘à╪▒╪ر ╪ث╪«╪▒┘ë ╪ث┘ê ╪د╪│╪ز╪«╪»┘à ╪▒┘╪╣ ╪د┘╪╡┘ê╪▒╪ر.';
+        : 'تعذر التقاط الصورة. حاول مرة أخرى أو استخدم رفع الصورة.';
       setAutoStatus('error');
       setAutoMessage(message);
       setQualityState('idle');
@@ -1104,15 +1104,15 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
       setQualityState('clear');
       setQualityMessage('');
       setAutoStatus('done');
-      const pointLabel = auditType === 'pupil' ? '╪د┘╪ص╪»┘é╪ر' : auditType === 'reflex' ? '╪د┘╪د┘╪╣┘â╪د╪│' : '╪د┘╪ش┘┘';
+      const pointLabel = auditType === 'pupil' ? 'الحدقة' : auditType === 'reflex' ? 'الانعكاس' : 'الجفن';
       setAutoMessage(outcome.mrdAvailable
-        ? `╪ز┘à ╪╢╪ذ╪╖ ┘┘é╪╖╪ر ${pointLabel} ┘è╪»┘ê┘è╪د┘ï ظ¤ AI_Quality_Flag = 3.`
-        : `╪ز┘à ╪╢╪ذ╪╖ ┘┘é╪╖╪ر ${pointLabel} ┘è╪»┘ê┘è╪د┘ï ظ¤ AI_Quality_Flag = 3. ╪ص╪»╪» ┘┘é╪╖╪ر ┬س╪ص╪» ╪د┘╪ش┘┘┬╗ ╪ث┘ê ╪د╪╢╪ذ╪╖ MRDظé ┘è╪»┘ê┘è╪د┘ï.`);
+        ? `تم ضبط نقطة ${pointLabel} يدوياً — AI_Quality_Flag = 3.`
+        : `تم ضبط نقطة ${pointLabel} يدوياً — AI_Quality_Flag = 3. حدد نقطة «حد الجفن» أو اضبط MRD₁ يدوياً.`);
     } else {
       setQualityState('clear');
       setQualityMessage('');
       setAutoStatus('idle');
-      setAutoMessage('╪ز┘à ╪ز╪│╪ش┘è┘ ╪د┘┘┘é╪╖╪ر. ╪ص╪»╪» ╪د┘╪ت┘ ╪د┘┘┘é╪╖╪ر ╪د┘╪ث╪«╪▒┘ë ┘┘┘╪│ ╪د┘╪╣┘è┘ (╪د┘╪ص╪»┘é╪ر ┘ê╪د┘╪د┘╪╣┘â╪د╪│) ┘╪ص╪│╪د╪ذ Hirschberg.');
+      setAutoMessage('تم تسجيل النقطة. حدد الآن النقطة الأخرى لنفس العين (الحدقة والانعكاس) لحساب Hirschberg.');
     }
   };
 
@@ -1135,7 +1135,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setHirschbergRecorded(true);
     setMrd1Recorded(true);
     setAIQualityFlag(3);
-    notify(`╪ز┘à ╪ز╪╖╪ذ┘è┘é ╪د┘╪ح╪╣╪»╪د╪» ╪د┘╪│╪▒┘è╪▒┘è: ${preset.label}. ┘è┘à┘â┘┘â ╪ز╪╣╪»┘è┘ ╪د┘┘é┘è┘à ┘è╪»┘ê┘è╪د┘ï ╪ح╪░╪د ┘╪▓┘à.`, 'success');
+    notify(`تم تطبيق الإعداد السريري: ${preset.label}. يمكنك تعديل القيم يدوياً إذا لزم.`, 'success');
   };
 
   const applyHealthyExternalEye = () => {
@@ -1143,7 +1143,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
     setExternalEyeFindings([]);
     setExternalEyeOther('');
     setExternalEyeScreened(true);
-    notify('╪ز┘à ╪ز╪│╪ش┘è┘ ╪د┘┘╪ص╪╡ ╪د┘╪«╪د╪▒╪ش┘è ┘â╪╖╪ذ┘è╪╣┘è. ╪ز╪د╪ذ╪╣ ╪ح┘┘ë ╪ز╪ص┘┘è┘ ╪د┘┘╪ز╪د╪خ╪ش.', 'success');
+    notify('تم تسجيل الفحص الخارجي كطبيعي. تابع إلى تحليل النتائج.', 'success');
   };
 
   const hasSuspicion = hirschbergRecorded && mrd1Recorded && (hirschbergMM >= 1.0 || mrd1MM < 2.5);
@@ -1231,15 +1231,15 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <div>
             <h2 className="card-head__title">
               <Camera size={20} aria-hidden="true" />
-              ╪د┘╪ز╪╡┘ê┘è╪▒ ╪د┘╪╣┘è┘┘è ╪د┘╪»┘é┘è┘é
+              التصوير العيني الدقيق
             </h2>
             <p className="card-head__sub">
-              ╪ز┘é┘è┘è┘à ╪د┘╪ص╪»┘é╪ر ┘ê╪د┘╪د┘╪╣┘â╪د╪│ ╪د┘┘é╪▒┘┘è ┘ê╪ز╪»┘┘è ╪د┘╪ش┘┘.
+              تقييم الحدقة والانعكاس القرني وتدلي الجفن.
             </p>
           </div>
           <span className="pill pill--primary">
             <Sun size={13} aria-hidden="true" />
-            ╪ح╪╢╪د╪ة╪ر ┘à┘ê╪▓╪╣╪ر
+            إضاءة موزعة
           </span>
         </div>
 
@@ -1268,10 +1268,10 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   className="capture-control-btn"
                   onClick={toggleCameraFacing}
                   disabled={cameraStarting || burstActive}
-                  aria-label="╪ز╪ذ╪»┘è┘ ╪د┘┘â╪د┘à┘è╪▒╪د ╪ذ┘è┘ ╪د┘╪«┘┘┘è╪ر ┘ê╪د┘╪ث┘à╪د┘à┘è╪ر"
+                  aria-label="تبديل الكاميرا بين الخلفية والأمامية"
                 >
                   <RefreshCw size={15} aria-hidden="true" />
-                  ≡ا¤ ╪ز╪ذ╪»┘è┘ ╪د┘┘â╪د┘à┘è╪▒╪د (╪«┘┘┘è╪ر / ╪ث┘à╪د┘à┘è╪ر)
+                  🔄 تبديل الكاميرا (خلفية / أمامية)
                 </button>
                 {torchSupported && (
                   <button
@@ -1280,15 +1280,15 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                     onClick={() => void toggleTorch()}
                     disabled={burstActive}
                     aria-pressed={torchOn}
-                    aria-label="╪ز╪┤╪║┘è┘ ╪ث┘ê ╪ح┘è┘é╪د┘ ┘┘╪د╪┤ ╪د┘┘â╪د┘à┘è╪▒╪د"
+                    aria-label="تشغيل أو إيقاف فلاش الكاميرا"
                   >
                     <Zap size={15} aria-hidden="true" />
-                    {torchOn ? '╪د┘┘┘╪د╪┤ ┘à┘┘╪╣┘ّ┘' : '╪ز╪┤╪║┘è┘ ╪د┘┘┘╪د╪┤'}
+                    {torchOn ? 'الفلاش مُفعّل' : 'تشغيل الفلاش'}
                   </button>
                 )}
               </div>
               <span className="capture-guide-label">
-                ╪╢╪╣ ┘ê╪ش┘ç ╪د┘╪╖┘┘ ╪»╪د╪«┘ ╪د┘╪»╪د╪خ╪▒╪ز┘è┘ ظ¤ ╪د╪ذ╪ز╪╣╪» 40ظô60 ╪│┘à
+                ضع وجه الطفل داخل الدائرتين — ابتعد 40–60 سم
               </span>
               <div className="camera-status-cluster">
                 <span
@@ -1297,21 +1297,21 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-live="polite"
                 >
                   {burstActive
-                    ? `ظ║ ╪ش╪د╪▒┘ ╪د┘╪ز┘é╪د╪╖ ${BURST_FRAME_COUNT} ╪ح╪╖╪د╪▒╪د╪ز ┘â╪د┘à┘╪ر ╪د┘╪»┘é╪ر...`
+                    ? `⏺ جارٍ التقاط ${BURST_FRAME_COUNT} إطارات كاملة الدقة...`
                     : stabilityState === 'stable'
-                      ? '≡اات ╪س╪د╪ذ╪ز ┘ê╪ش╪د┘ç╪▓ ┘┘╪ز┘é╪د╪╖'
-                      : '≡ا¤┤ ╪ص╪▒┘ّ┘â ╪د┘┘ç╪د╪ز┘ ╪ذ╪س╪ذ╪د╪ز...'}
+                      ? '🟢 ثابت وجاهز للتقاط'
+                      : '🔴 حرّك الهاتف بثبات...'}
                 </span>
                 {cameraLockLabel && (
-                  <span className="camera-lock-badge" title="╪ز┘à ╪ز╪س╪ذ┘è╪ز ╪د┘╪ز╪▒┘â┘è╪▓ ┘ê╪د┘╪ز╪╣╪▒╪╢ ┘╪ز┘é┘┘è┘ ╪د┘╪ز╪║┘è┘ّ╪▒ ╪ث╪س┘╪د╪ة ╪د┘╪د┘╪ز┘é╪د╪╖">
+                  <span className="camera-lock-badge" title="تم تثبيت التركيز والتعرض لتقليل التغيّر أثناء الالتقاط">
                     <Lock size={11} aria-hidden="true" />
-                    {cameraLockLabel} ┘à┘é┘┘ê┘
+                    {cameraLockLabel} مقفول
                   </span>
                 )}
               </div>
               <span className="capture-hint">
                 <CheckCircle2 size={14} aria-hidden="true" />
-                ╪ص╪د┘╪╕ ╪╣┘┘ë ╪س╪ذ╪د╪ز ╪د┘┘â╪د┘à┘è╪▒╪د ┘ê╪ث╪▓┘ ╪د┘╪د┘╪╣┘â╪د╪│╪د╪ز ╪د┘┘à╪ذ╪د╪┤╪▒╪ر
+                حافظ على ثبات الكاميرا وأزل الانعكاسات المباشرة
               </span>
             </>
           ) : userImage ? (
@@ -1320,14 +1320,14 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               ref={previewRef}
               onPointerDown={handlePreviewPointerDown}
               role="group"
-              aria-label="┘à╪╣╪د┘è┘╪ر ╪د┘╪╣┘è┘ ┘à╪╣ ╪╖╪ذ┘é╪ر ╪د┘╪ز╪»┘é┘è┘é ╪د┘╪ذ╪╡╪▒┘è. ╪د┘┘à╪│ ╪د┘╪╡┘ê╪▒╪ر ┘╪ز╪╣╪»┘è┘ ┘┘é╪╖╪ر ╪د┘╪ص╪»┘é╪ر ╪ث┘ê ╪د┘╪د┘╪╣┘â╪د╪│ ╪ث┘ê ╪ص╪» ╪د┘╪ش┘┘."
+              aria-label="معاينة العين مع طبقة التدقيق البصري. المس الصورة لتعديل نقطة الحدقة أو الانعكاس أو حد الجفن."
             >
-              <img src={userImage.src} alt="╪╡┘ê╪▒╪ر ╪د┘╪╣┘è┘ ╪د┘┘à┘╪ز┘é╪╖╪ر ┘┘╪ز╪ص┘┘è┘" draggable={false} />
+              <img src={userImage.src} alt="صورة العين الملتقطة للتحليل" draggable={false} />
               <svg className="precision-hud" viewBox={`0 0 ${ANALYSIS_WIDTH} ${ANALYSIS_HEIGHT}`} preserveAspectRatio="none" aria-hidden="true">
                 {(['OD', 'OS'] as EyeKey[]).map(renderEyeAuditHud)}
               </svg>
               <span className="precision-tap-hint" aria-hidden="true">
-                ╪د┘┘à╪│ ┘╪ز╪╣╪»┘è┘ ╪د┘╪ص╪»┘é╪ر (╪ث╪ص┘à╪▒) ╪ث┘ê ╪د┘╪د┘╪╣┘â╪د╪│ (╪│┘à╪د┘ê┘è)
+                المس لتعديل الحدقة (أحمر) أو الانعكاس (سماوي)
               </span>
             </div>
           ) : (
@@ -1335,18 +1335,18 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               {cameraStarting ? (
                 <>
                   <span className="capture-spinner" aria-hidden="true" />
-                  <strong>╪ش╪د╪▒┘ ╪ز╪┤╪║┘è┘ ╪د┘┘â╪د┘à┘è╪▒╪دظخ</strong>
-                  <span>╪د┘╪ز╪╕╪▒ ┘╪ص╪╕╪ر ╪ص╪ز┘ë ╪ز╪╕┘ç╪▒ ╪د┘┘à╪╣╪د┘è┘╪ر.</span>
+                  <strong>جارٍ تشغيل الكاميرا…</strong>
+                  <span>انتظر لحظة حتى تظهر المعاينة.</span>
                 </>
               ) : (
                 <>
                   <Camera size={42} aria-hidden="true" />
-                  <strong>{cameraError ? '╪ز╪╣╪░╪▒ ╪ز╪┤╪║┘è┘ ╪د┘┘â╪د┘à┘è╪▒╪د' : '╪ش╪د┘ç╪▓ ┘┘╪ص╪╡ ╪د┘╪╣┘è┘'}</strong>
-                  <span>{cameraError || '╪د┘╪ز╪ص ╪د┘┘â╪د┘à┘è╪▒╪د ╪ث┘ê ╪د╪▒┘╪╣ ╪╡┘ê╪▒╪ر ┘ê╪د╪╢╪ص╪ر ┘┘╪╣┘è┘.'}</span>
+                  <strong>{cameraError ? 'تعذر تشغيل الكاميرا' : 'جاهز لفحص العين'}</strong>
+                  <span>{cameraError || 'افتح الكاميرا أو ارفع صورة واضحة للعين.'}</span>
                   {cameraError && (
                     <button type="button" className="m3-btn m3-btn--outline capture-retry" onClick={() => startCamera()}>
                       <RefreshCw size={15} aria-hidden="true" />
-                      ╪ح╪╣╪د╪»╪ر ╪د┘┘à╪ص╪د┘ê┘╪ر
+                      إعادة المحاولة
                     </button>
                   )}
                 </>
@@ -1365,29 +1365,29 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           >
             {burstActive ? <span className="capture-inline-spinner" aria-hidden="true" /> : <Camera size={20} aria-hidden="true" />}
             {cameraStarting
-              ? '╪ش╪د╪▒┘ ╪ز╪┤╪║┘è┘ ╪د┘┘â╪د┘à┘è╪▒╪دظخ'
+              ? 'جارٍ تشغيل الكاميرا…'
               : cameraActive
                 ? burstActive
-                  ? `╪ش╪د╪▒┘ ╪»┘à╪ش ${BURST_FRAME_COUNT} ╪ح╪╖╪د╪▒╪د╪ز ┘â╪د┘à┘╪ر ╪د┘╪»┘é╪رظخ`
+                  ? `جارٍ دمج ${BURST_FRAME_COUNT} إطارات كاملة الدقة…`
                   : stabilityState === 'stable'
-                    ? `╪د┘╪ز┘é╪د╪╖ ${BURST_FRAME_COUNT} ╪ح╪╖╪د╪▒╪د╪ز (╪س╪د╪ذ╪ز ╪د┘╪ت┘)`
-                    : '╪د┘╪ز┘é╪د╪╖ ╪د┘╪╡┘ê╪▒╪ر ╪د┘╪ت┘'
+                    ? `التقاط ${BURST_FRAME_COUNT} إطارات (ثابت الآن)`
+                    : 'التقاط الصورة الآن'
                 : userImage
-                  ? '╪ح╪╣╪د╪»╪ر ╪د┘╪ز╪╡┘ê┘è╪▒'
-                  : '┘╪ز╪ص ╪د┘┘â╪د┘à┘è╪▒╪د'}
+                  ? 'إعادة التصوير'
+                  : 'فتح الكاميرا'}
           </button>
 
           {cameraActive && !burstActive && (
             <p className="capture-burst-note">
               <Sparkles size={13} aria-hidden="true" />
-              ┘ث ╪ح╪╖╪د╪▒╪د╪ز ╪«┘╪د┘ ┘ث┘ب┘ب ┘à┘┘┘è ╪س╪د┘┘è╪ر ┘╪«┘╪╢ ╪د┘ç╪ز╪▓╪د╪▓ ╪د┘┘è╪».
+              ٣ إطارات خلال ٣٠٠ مللي ثانية لخفض اهتزاز اليد.
             </p>
           )}
 
           <div className="flex flex-wrap gap-2 mt-2">
             <label className="m3-btn m3-btn--outline cursor-pointer flex-1">
               <Upload size={17} aria-hidden="true" />
-              ╪▒┘╪╣ ╪╡┘ê╪▒╪ر
+              رفع صورة
               <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
             </label>
             {!cameraActive && (
@@ -1398,13 +1398,13 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 disabled={cameraStarting}
               >
                 <RefreshCw size={16} aria-hidden="true" />
-                ≡ا¤ ╪ز╪ذ╪»┘è┘ ╪د┘┘â╪د┘à┘è╪▒╪د (╪«┘┘┘è╪ر / ╪ث┘à╪د┘à┘è╪ر)
+                🔄 تبديل الكاميرا (خلفية / أمامية)
               </button>
             )}
             {userImage && (
               <button type="button" className="m3-btn m3-btn--outline" onClick={resetImage}>
                 <RefreshCw size={16} aria-hidden="true" />
-                ┘à╪│╪ص ╪د┘╪╡┘ê╪▒╪ر
+                مسح الصورة
               </button>
             )}
           </div>
@@ -1414,21 +1414,21 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <div className="notice notice--warn quality-banner mt-3" role="status">
             <AlertCircle size={18} aria-hidden="true" />
             <div>
-              <strong>╪ز┘┘à┘è╪ص ╪ش┘ê╪»╪ر ╪د┘╪╡┘ê╪▒╪ر (╪║┘è╪▒ ┘à╪╣╪╖┘ّ┘)</strong>
+              <strong>تلميح جودة الصورة (غير معطّل)</strong>
               <p>{qualityMessage}</p>
             </div>
           </div>
         ) : autoStatus !== 'idle' ? (
           <div className={`notice mt-3 ${autoStatus === 'done' ? 'notice--pass' : autoStatus === 'scanning' ? 'notice--info' : 'notice--warn'}`} role="status">
             {autoStatus === 'done' ? <CheckCircle2 size={16} aria-hidden="true" /> : autoStatus === 'scanning' ? <Sparkles size={16} aria-hidden="true" /> : <AlertCircle size={16} aria-hidden="true" />}
-            <span>{autoStatus === 'scanning' ? '╪ش╪د╪▒┘ ┘é┘è╪د╪│ ╪ش┘ê╪»╪ر ╪د┘╪╡┘ê╪▒╪ر ┘ê╪د┘┘┘é╪د╪╖ ╪د┘╪ز╪┤╪▒┘è╪ص┘è╪رظخ' : autoMessage}</span>
+            <span>{autoStatus === 'scanning' ? 'جارٍ قياس جودة الصورة والنقاط التشريحية…' : autoMessage}</span>
           </div>
         ) : null}
 
         {userImage && (
           <>
-            <div className="audit-tools" role="group" aria-label="┘┘ê╪╣ ╪د┘┘┘é╪╖╪ر ╪د┘┘à╪▒╪د╪» ╪ز╪╣╪»┘è┘┘ç╪د ╪╣┘┘ë ╪د┘╪╡┘ê╪▒╪ر">
-              <span className="audit-tools__label">┘┘é╪╖╪ر ╪د┘╪ز╪╣╪»┘è┘:</span>
+            <div className="audit-tools" role="group" aria-label="نوع النقطة المراد تعديلها على الصورة">
+              <span className="audit-tools__label">نقطة التعديل:</span>
               <button
                 type="button"
                 className={`audit-tool${auditType === 'pupil' ? ' is-active' : ''}`}
@@ -1436,7 +1436,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 onClick={() => setAuditType('pupil')}
               >
                 <span className="audit-tool__dot audit-tool__dot--pupil" aria-hidden="true" />
-                ╪د┘╪ص╪»┘é╪ر
+                الحدقة
               </button>
               <button
                 type="button"
@@ -1445,7 +1445,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 onClick={() => setAuditType('reflex')}
               >
                 <span className="audit-tool__dot audit-tool__dot--reflex" aria-hidden="true" />
-                ╪د┘╪د┘╪╣┘â╪د╪│ ╪د┘┘é╪▒┘┘è
+                الانعكاس القرني
               </button>
               <button
                 type="button"
@@ -1454,7 +1454,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 onClick={() => setAuditType('eyelid')}
               >
                 <span className="audit-tool__dot audit-tool__dot--eyelid" aria-hidden="true" />
-                ╪ص╪» ╪د┘╪ش┘┘
+                حد الجفن
               </button>
             </div>
           </>
@@ -1462,8 +1462,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
         <div className="clinical-presets">
           <div className="clinical-presets__head">
-            <strong>╪ح╪╣╪»╪د╪» ╪│╪▒┘è╪▒┘è ╪│╪▒┘è╪╣</strong>
-            <span>┘è┘à┘╪ث Hirschberg ┘ê MRDظé ╪ذ┘┘é╪▒╪ر ┘ê╪د╪ص╪»╪ر</span>
+            <strong>إعداد سريري سريع</strong>
+            <span>يملأ Hirschberg و MRD₁ بنقرة واحدة</span>
           </div>
           <div className="clinical-presets__grid">
             {CLINICAL_PRESETS.map((preset) => {
@@ -1491,7 +1491,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
         <p className="field-hint mt-2 flex items-start gap-1.5">
           <ShieldCheck size={13} aria-hidden="true" />
-          ┘é┘è╪د╪│ ┘à╪ص┘┘è ╪ذ╪د┘┘â╪د┘à┘ ظ¤ ┘╪د ╪ز┘╪▒┘╪╣ ╪د┘╪╡┘ê╪▒.
+          قياس محلي بالكامل — لا تُرفع الصور.
         </p>
       </section>
 
@@ -1500,47 +1500,47 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <div>
             <h2 className="card-head__title">
               <Eye size={20} aria-hidden="true" />
-              ╪د┘┘é┘è╪د╪│╪د╪ز ┘ê╪د┘╪ز┘é┘è┘è┘à ╪د┘╪│╪▒┘è╪▒┘è
+              القياسات والتقييم السريري
             </h2>
             <p className="card-head__sub">
-              ╪ز┘╪ص╪»┘ّ╪س ╪د┘┘é┘è┘à ┘┘ê╪▒ ╪ز╪╣╪»┘è┘ ┘┘é╪د╪╖ ╪د┘╪╡┘ê╪▒╪ر.
+              تُحدّث القيم فور تعديل نقاط الصورة.
             </p>
           </div>
           <span className="pill pill--neutral">
             <Activity size={13} aria-hidden="true" />
-            HVID 11.7 ┘à┘à
+            HVID 11.7 مم
           </span>
         </div>
 
         <div className={`status-pill ${alignmentState === 'pass' ? 'is-pass' : alignmentState === 'warn' ? 'is-warn' : 'is-idle'}`} role="status">
           <span className="status-pill__label">
             {alignmentState === 'pass' ? <CheckCircle2 size={18} aria-hidden="true" /> : <AlertCircle size={18} aria-hidden="true" />}
-            ╪ص╪د┘╪ر ╪د┘┘à╪ص╪د╪░╪د╪ر ╪د┘╪╣┘è┘┘è╪ر
+            حالة المحاذاة العينية
           </span>
           <span className="status-pill__value">
-            {alignmentState === 'pass' && '╪╖╪ذ┘è╪╣┘è ┘à╪ذ╪»╪خ┘è╪د┘ï'}
-            {alignmentState === 'warn' && '┘è╪ص╪ز╪د╪ش ┘à╪▒╪د╪ش╪╣╪ر ╪│╪▒┘è╪▒┘è╪ر'}
-            {alignmentState === 'idle' && '╪ذ╪د┘╪ز╪╕╪د╪▒ ╪د┘┘é┘è╪د╪│'}
+            {alignmentState === 'pass' && 'طبيعي مبدئياً'}
+            {alignmentState === 'warn' && 'يحتاج مراجعة سريرية'}
+            {alignmentState === 'idle' && 'بانتظار القياس'}
           </span>
         </div>
 
         <div className="reading-grid mt-2">
           <div className="reading-box">
-            <span>╪╣╪»┘à ╪ز┘à╪د╪س┘ ╪د┘╪د┘╪╣┘â╪د╪│ ظ¤ Hirschberg</span>
-            <strong>{hirschbergRecorded ? `${formatMM(hirschbergMM)} mm` : 'ظ¤'}</strong>
-            <small>{hirschbergRecorded ? `${prismDiopters}PD ╪ز┘é╪»┘è╪▒┘è` : '╪ذ╪د┘╪ز╪╕╪د╪▒ ╪د┘╪ز╪ص┘┘è┘'}</small>
+            <span>عدم تماثل الانعكاس — Hirschberg</span>
+            <strong>{hirschbergRecorded ? `${formatMM(hirschbergMM)} mm` : '—'}</strong>
+            <small>{hirschbergRecorded ? `${prismDiopters}PD تقديري` : 'بانتظار التحليل'}</small>
           </div>
           <div className="reading-box">
-            <span>┘à╪│╪د┘╪ر ╪د┘╪ش┘┘ ╪د┘╪╣┘┘ê┘è ظ¤ MRDظé</span>
-            <strong>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : 'ظ¤'}</strong>
-            <small>{mrd1Recorded ? (mrd1MM < 2.5 ? '╪د╪┤╪ز╪ذ╪د┘ç ╪ز╪»┘┘è ╪ش┘┘' : '╪╢┘à┘ ╪د┘╪ص╪»┘ê╪»') : '╪ذ╪د┘╪ز╪╕╪د╪▒ ╪د┘╪ز╪ص┘┘è┘'}</small>
+            <span>مسافة الجفن العلوي — MRD₁</span>
+            <strong>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : '—'}</strong>
+            <small>{mrd1Recorded ? (mrd1MM < 2.5 ? 'اشتباه تدلي جفن' : 'ضمن الحدود') : 'بانتظار التحليل'}</small>
           </div>
         </div>
 
         <div className="tap-section">
           <h3 className="section-title">
             <Eye size={16} aria-hidden="true" />
-            ╪د┘┘╪ص╪╡ ╪د┘╪«╪د╪▒╪ش┘è ╪د┘╪╕╪د┘ç╪▒
+            الفحص الخارجي الظاهر
           </h3>
           <button
             type="button"
@@ -1550,8 +1550,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           >
             <CheckCircle2 size={24} aria-hidden="true" />
             <span>
-              <strong>ظ£à ╪د┘╪╣┘è┘╪د┘ ╪│┘┘è┘à╪ز╪د┘ ╪╕╪د┘ç╪▒┘è╪د┘ï</strong>
-              <small>┘╪د ╪د╪ص┘à╪▒╪د╪▒╪î ┘╪د ╪ح┘╪▒╪د╪▓╪د╪ز ╪╕╪د┘ç╪▒╪ر╪î ┘ê┘╪د ╪د┘╪ص╪▒╪د┘ ┘à┘╪ص┘ê╪╕.</small>
+              <strong>✅ العينان سليمتان ظاهرياً</strong>
+              <small>لا احمرار، لا إفرازات ظاهرة، ولا انحراف ملحوظ.</small>
             </span>
           </button>
 
@@ -1564,11 +1564,11 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
               setExternalEyeScreened(true);
             }}
           >
-            {externalEyeGateAbnormal ? '╪ح╪«┘╪د╪ة ┘à┘╪د╪ص╪╕╪د╪ز ╪د┘┘╪ص╪╡ ╪د┘╪«╪د╪▒╪ش┘è ╪║┘è╪▒ ╪د┘╪╖╪ذ┘è╪╣┘è╪ر' : '╪ح╪╢╪د┘╪ر ┘à┘╪د╪ص╪╕╪ر ┘┘┘╪ص╪╡ ╪د┘╪«╪د╪▒╪ش┘è ╪║┘è╪▒ ╪د┘╪╖╪ذ┘è╪╣┘è'}
+            {externalEyeGateAbnormal ? 'إخفاء ملاحظات الفحص الخارجي غير الطبيعية' : 'إضافة ملاحظة للفحص الخارجي غير الطبيعي'}
           </button>
 
           {externalEyeGateAbnormal && (
-            <div className="external-gate-chips" role="group" aria-label="┘à┘╪د╪ص╪╕╪د╪ز ╪د┘┘╪ص╪╡ ╪د┘╪«╪د╪▒╪ش┘è">
+            <div className="external-gate-chips" role="group" aria-label="ملاحظات الفحص الخارجي">
               {EYE_FINDINGS.map((finding) => {
                 const selected = externalEyeFindings.includes(finding.id);
                 return (
@@ -1589,7 +1589,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
           {externalEyeScreened && externalEyeFindings.length > 0 && (
             <p className="external-gate-summary" role="status">
-              ╪ز┘à ╪ز╪│╪ش┘è┘ {externalEyeFindings.length} ┘à┘╪د╪ص╪╕╪ر ╪«╪د╪▒╪ش┘è╪ر.
+              تم تسجيل {externalEyeFindings.length} ملاحظة خارجية.
             </p>
           )}
         </div>
@@ -1598,9 +1598,9 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <div className="flex items-center justify-between gap-2">
             <h3 className="section-title">
               <Sparkles size={16} aria-hidden="true" />
-              ╪ث╪╣╪▒╪د╪╢ ╪د┘╪ح╪ش┘ç╪د╪» ╪د┘╪ذ╪╡╪▒┘è
+              أعراض الإجهاد البصري
             </h3>
-            <span className="pill pill--primary">{asthenopiaScore} ┘à┘ 5</span>
+            <span className="pill pill--primary">{asthenopiaScore} من 5</span>
           </div>
           <div className="grid gap-3">
             {ASTHENOPIA_SIGNS.map((item) => {
@@ -1641,15 +1641,15 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
           <summary>
             <span className="flex items-center gap-2">
               <Sliders size={16} aria-hidden="true" />
-              ╪ز╪╣╪»┘è┘ ┘è╪»┘ê┘è ┘à╪ز┘é╪»┘à
+              تعديل يدوي متقدم
             </span>
-            <span className="text-[10px] font-semibold text-slate-400">┘┘┘à╪▒╪د╪ش╪╣ ┘┘é╪╖</span>
+            <span className="text-[10px] font-semibold text-slate-400">للمراجع فقط</span>
           </summary>
           <div className="details-body">
             <div className="slider-row">
               <div className="slider-row__head">
-                <span>╪╣╪»┘à ╪د┘╪ز┘à╪د╪س┘ ظ¤ Hirschberg</span>
-                <output>{hirschbergRecorded ? `${formatMM(hirschbergMM)} mm` : '╪║┘è╪▒ ┘à╪│╪ش┘'}</output>
+                <span>عدم التماثل — Hirschberg</span>
+                <output>{hirschbergRecorded ? `${formatMM(hirschbergMM)} mm` : 'غير مسجل'}</output>
               </div>
               <input
                 type="range"
@@ -1663,7 +1663,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   setHirschbergRecorded(true);
                   setAIQualityFlag(3);
                 }}
-                aria-label="┘é┘è┘à╪ر Hirschberg ╪ذ╪د┘┘à┘┘è┘à╪ز╪▒"
+                aria-label="قيمة Hirschberg بالمليمتر"
               />
               <div className="flex justify-between text-[10px] text-[var(--m3-muted)] mono">
                 <span>0.0</span><span>1.0</span><span>3.0 mm</span>
@@ -1672,8 +1672,8 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
 
             <div className="slider-row">
               <div className="slider-row__head">
-                <span>┘à╪│╪د┘╪ر ╪د┘╪ش┘┘ ╪د┘╪╣┘┘ê┘è ظ¤ MRDظé</span>
-                <output>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : '╪║┘è╪▒ ┘à╪│╪ش┘'}</output>
+                <span>مسافة الجفن العلوي — MRD₁</span>
+                <output>{mrd1Recorded ? `${mrd1MM.toFixed(1)} mm` : 'غير مسجل'}</output>
               </div>
               <input
                 type="range"
@@ -1687,7 +1687,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   setMrd1Recorded(true);
                   setAIQualityFlag(3);
                 }}
-                aria-label="┘é┘è┘à╪ر MRD1 ╪ذ╪د┘┘à┘┘è┘à╪ز╪▒"
+                aria-label="قيمة MRD1 بالمليمتر"
               />
               <div className="flex justify-between text-[10px] text-[var(--m3-muted)] mono">
                 <span>0.5</span><span>2.5</span><span>6.0 mm</span>
@@ -1702,19 +1702,19 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                 className="m3-btn m3-btn--secondary m3-btn--sm"
               >
                 <Sparkles size={14} aria-hidden="true" />
-                ╪ح╪╣╪د╪»╪ر ╪د┘┘â╪┤┘ ╪د┘╪ز┘┘é╪د╪خ┘è
+                إعادة الكشف التلقائي
               </button>
               <span className="field-hint">HVID = 11.7 mm</span>
             </div>
 
             <div className="slider-row">
               <div className="slider-row__head">
-                <span>┘à╪╡╪»╪▒ ╪د┘┘é┘è╪د╪│ ظ¤ AI_Quality_Flag</span>
+                <span>مصدر القياس — AI_Quality_Flag</span>
                 <output>
-                  {aiQualityFlag === 1 && '╪ز┘┘é╪د╪خ┘è (1)'}
-                  {aiQualityFlag === 2 && '┘à╪ص╪د┘ê┘╪ر ╪س╪د┘┘è╪ر (2)'}
-                  {aiQualityFlag === 3 && '╪ز╪ص╪»┘è╪» ┘è╪»┘ê┘è (3)'}
-                  {!aiQualityFlag && '╪║┘è╪▒ ┘à╪│╪ش┘'}
+                  {aiQualityFlag === 1 && 'تلقائي (1)'}
+                  {aiQualityFlag === 2 && 'محاولة ثانية (2)'}
+                  {aiQualityFlag === 3 && 'تحديد يدوي (3)'}
+                  {!aiQualityFlag && 'غير مسجل'}
                 </output>
               </div>
               <div className="segmented w-fit">
@@ -1724,7 +1724,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-pressed={aiQualityFlag === 1}
                   onClick={() => setAIQualityFlag(1)}
                 >
-                  1 ظ¤ ╪ز┘┘é╪د╪خ┘è
+                  1 — تلقائي
                 </button>
                 <button
                   type="button"
@@ -1732,7 +1732,7 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-pressed={aiQualityFlag === 2}
                   onClick={() => setAIQualityFlag(2)}
                 >
-                  2 ظ¤ ╪ح╪╣╪د╪»╪ر
+                  2 — إعادة
                 </button>
                 <button
                   type="button"
@@ -1740,11 +1740,11 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
                   aria-pressed={aiQualityFlag === 3}
                   onClick={() => setAIQualityFlag(3)}
                 >
-                  3 ظ¤ ┘è╪»┘ê┘è
+                  3 — يدوي
                 </button>
               </div>
               <p className="field-hint">
-                ╪د╪«╪ز╪▒ ╪╖╪▒┘è┘é╪ر ╪د┘┘é╪▒╪د╪ة╪ر ╪د┘┘╪╣┘┘è╪ر.
+                اختر طريقة القراءة الفعلية.
               </p>
             </div>
           </div>
@@ -1753,16 +1753,16 @@ export const OcularBiometryStation: React.FC<OcularBiometryProps> = ({
         <div className={`notice mt-3 ${triageOcularFlag === 0 && hirschbergRecorded && mrd1Recorded ? 'notice--pass' : 'notice--warn'}`}>
           <ShieldCheck size={16} aria-hidden="true" />
           <span>
-            {(!hirschbergRecorded || !mrd1Recorded) && '┘┘à ╪ز┘â╪ز┘à┘ ┘é┘è┘à Hirschberg ┘ê MRDظé ╪ذ╪╣╪». ╪د┘╪ز┘é╪╖ ╪╡┘ê╪▒╪ر ┘ê╪د╪╢╪ص╪ر ╪ث┘ê ╪د╪│╪ز╪«╪»┘à ╪د┘╪ز╪ص╪»┘è╪» ╪د┘┘è╪»┘ê┘è.'}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 0 && '╪د┘┘é┘è╪د╪│╪د╪ز ╪╢┘à┘ ╪د┘╪ص╪»┘ê╪» ╪د┘┘à╪ذ╪»╪خ┘è╪ر. ╪ز╪د╪ذ╪╣ ╪ح┘┘ë ╪ز╪ص┘┘è┘ ╪د┘┘╪ز╪د╪خ╪ش.'}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 1 && `╪د╪┤╪ز╪ذ╪د┘ç ╪ص┘┘ê┘┘ ظ¤ ${prismDiopters} PD ╪ز┘é╪»┘è╪▒┘è.`}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 2 && `┘é┘è┘à╪ر MRDظé ╪ث┘é┘ ┘à┘ ╪د┘╪ص╪» (${mrd1MM.toFixed(1)} mm).`}
-            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 3 && '╪د╪┤╪ز╪ذ╪د┘ç ╪ص┘┘ê┘┘ ┘à╪╣ ╪ز╪»┘┘è ╪ش┘┘ ظ¤ ┘è╪ص╪ز╪د╪ش ╪ز┘é┘è┘è┘à╪د┘ï ╪│╪▒┘è╪▒┘è╪د┘ï.'}
+            {(!hirschbergRecorded || !mrd1Recorded) && 'لم تكتمل قيم Hirschberg و MRD₁ بعد. التقط صورة واضحة أو استخدم التحديد اليدوي.'}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 0 && 'القياسات ضمن الحدود المبدئية. تابع إلى تحليل النتائج.'}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 1 && `اشتباه حَوَل — ${prismDiopters} PD تقديري.`}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 2 && `قيمة MRD₁ أقل من الحد (${mrd1MM.toFixed(1)} mm).`}
+            {hirschbergRecorded && mrd1Recorded && triageOcularFlag === 3 && 'اشتباه حَوَل مع تدلي جفن — يحتاج تقييماً سريرياً.'}
           </span>
         </div>
 
         <button type="button" onClick={onProceedToCDSS} className="m3-btn m3-btn--primary m3-btn--block mt-3">
-          ╪د┘┘à╪ز╪د╪ذ╪╣╪ر ╪ح┘┘ë ╪د┘╪ز╪ص┘┘è┘ ╪د┘╪│╪▒┘è╪▒┘è
+          المتابعة إلى التحليل السريري
           <ChevronDown size={16} className="-rotate-90" aria-hidden="true" />
         </button>
       </section>

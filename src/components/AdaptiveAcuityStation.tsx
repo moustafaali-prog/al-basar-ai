@@ -199,6 +199,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
       return;
     }
     startEyeTest('OD', false);
+    setClinicalFullscreen(true);
     setAwaitingStart(false);
   };
 
@@ -446,7 +447,30 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
     touchStartRef.current = null;
-    if (Math.max(absX, absY) < 30) return;
+
+    // A tap (not a swipe) is a direct response: the examiner touches the side
+    // of the stage where the E opens, or the horizontal quarter that matches
+    // the HOTV letter. This keeps the fullscreen field free of any written
+    // instructions while still giving a fast, one-tap clinical response.
+    if (Math.max(absX, absY) < 30) {
+      if (!clinicalFullscreen) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      if (mode === 'HOTV') {
+        const relativeX = (touch.clientX - rect.left) / rect.width;
+        const index = Math.min(HOTV_LETTERS.length - 1, Math.max(0, Math.floor(relativeX * HOTV_LETTERS.length)));
+        handleLetterResponse(HOTV_LETTERS[index]);
+        return;
+      }
+      const offsetX = touch.clientX - (rect.left + rect.width / 2);
+      const offsetY = touch.clientY - (rect.top + rect.height / 2);
+      if (Math.abs(offsetX) > Math.abs(offsetY)) {
+        handleResponse(offsetX > 0 ? 0 : 180);
+      } else {
+        handleResponse(offsetY > 0 ? 90 : 270);
+      }
+      return;
+    }
 
     if (mode === 'TUMBLING_E') {
       const angle = absX > absY ? (dx > 0 ? 0 : 180) : (dy > 0 ? 90 : 270);
@@ -470,6 +494,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
   return (
     <div className={`who-eyes-step2 min-h-screen bg-neutral-950 text-white flex flex-col${clinicalFullscreen ? ' is-clinical-fullscreen' : ''}`}>
       {/* Top bar */}
+      {!clinicalFullscreen && (
       <header className="acuity-header flex items-center justify-between px-4 py-3 border-b border-white/10">
         <div className="flex items-center gap-3">
           <span className="pill flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-full text-sm font-semibold">
@@ -501,9 +526,10 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
           </button>
         </div>
       </header>
+      )}
 
       {/* Non-blocking calibration advisory (WHO 2025: optotype size needs a calibrated screen). */}
-      {!calibration.isCalibrated && (
+      {!clinicalFullscreen && !calibration.isCalibrated && (
         <div className="acuity-calibration-badge" role="status" aria-live="polite">
           <AlertTriangle size={13} aria-hidden="true" />
           <span>⚠️ يُنصح بمعايرة شاشة هذا الهاتف من لوحة المشرف لدقة مقاس الحروف.</span>
@@ -534,9 +560,8 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
             </span>
             <h2 className="acuity-start-card__title">👁️ ابدأ فحص العين اليمنى OD</h2>
             <ul className="acuity-start-card__list">
-              <li>تأكد أن الطفل جالس على بُعد <strong>{(calibration.testingDistanceMeters ?? 2.0).toFixed(1)} متر</strong> من الشاشة.</li>
-              <li>غطِّ <strong>العين اليسرى</strong> بالكامل قبل البدء.</li>
-              <li>اضغط الزر عندها فقط ليبدأ المؤقت؛ المدة تُسجَّل في تحليل SPSS.</li>
+              <li>الطفل على بُعد <strong>{(calibration.testingDistanceMeters ?? 2.0).toFixed(1)} متر</strong>، والعين اليسرى مغطاة.</li>
+              <li>المس الشاشة: في وضع E باتجاه الفتحة، وفي وضع HOTV ربع الحرف (H O T V من اليسار).</li>
             </ul>
             <button
               type="button"
@@ -580,6 +605,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
               onTouchStart={handleStageTouchStart}
               onTouchEnd={handleStageTouchEnd}
             >
+              {!clinicalFullscreen && (
               <div className="acuity-stage-hud">
                 <span className="acuity-hud-eye"><Eye size={13} aria-hidden="true" /> {eyeLabel}</span>
                 <span
@@ -595,6 +621,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
                 </span>
                 <span className="acuity-hud-mode">{mode === 'HOTV' ? 'HOTV' : 'Tumbling E'}</span>
               </div>
+              )}
 
               {clinicalFullscreen && (
                 <button
@@ -602,9 +629,9 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
                   className="acuity-fullscreen-exit"
                   onClick={() => setClinicalFullscreen(false)}
                   aria-label="الخروج من ملء الشاشة السريري"
+                  onTouchEnd={(event) => event.stopPropagation()}
                 >
-                  <Minimize2 size={15} aria-hidden="true" />
-                  خروج
+                  <Minimize2 size={18} aria-hidden="true" />
                 </button>
               )}
 
@@ -625,6 +652,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
                 )}
               </div>
 
+              {!clinicalFullscreen && (
               <div className="acuity-stage-foot">
                 {mode === 'TUMBLING_E'
                   ? 'اسحب على المسرح باتجاه فتحة E، أو استخدم الأزرار الكبيرة.'
@@ -632,10 +660,12 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
                     ? `اخترت الحرف ${swipeLetter} — اسحب لأعلى للتأكيد، أو المس الزر مباشرة.`
                     : 'اسحب يميناً/يساراً لاختيار الحرف ثم لأعلى للتأكيد، أو المس الحرف المطابق.'}
               </div>
+              )}
             </div>
           </main>
 
           {/* Bottom Pad */}
+          {!clinicalFullscreen && (
           <footer className="acuity-pad p-4 bg-neutral-950">
             <button
               type="button"
@@ -678,6 +708,7 @@ export const AdaptiveAcuityStation: React.FC<AdaptiveAcuityProps> = ({
               )}
             </div>
           </footer>
+          )}
         </>
       )}
 
