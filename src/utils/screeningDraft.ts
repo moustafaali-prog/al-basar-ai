@@ -10,6 +10,7 @@ export interface ActiveScreeningDraft {
   updatedAt: number;
   activeStep: 1 | 2 | 3 | 4;
   childId: string;
+  childName: string;
   gradeLevel: number;
   ageYears: number;
   gender: string;

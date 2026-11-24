@@ -19,6 +19,8 @@ import { WHOPreScreenDraft } from '../types';
 interface RegistrationProps {
   childId: string;
   setChildId: (id: string) => void;
+  childName: string;
+  setChildName: (name: string) => void;
   examinerId: string;
   setExaminerId: (id: string) => void;
   parentalConsent: number;
@@ -204,6 +206,8 @@ const PaperAcuityGrid: React.FC<PaperAcuityGridProps> = ({ label, value, onChang
 export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
   childId,
   setChildId,
+  childName,
+  setChildName,
   examinerId,
   setExaminerId,
   parentalConsent,
@@ -567,6 +571,11 @@ export const RegistrationAndPaperStation: React.FC<RegistrationProps> = ({
                   مسح QR
                 </button>
               </div>
+            </div>
+
+            <div>
+              <label className="block mb-2 font-semibold">اسم التلميذ</label>
+              <input type="text" value={childName} onChange={e=>setChildName(e.target.value)} className="m3-input text-lg" placeholder="أدخل اسم التلميذ الكامل" />
             </div>
 
             <div>

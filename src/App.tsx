@@ -218,6 +218,7 @@ export default function App() {
 
   // Student Demographics & Protocol State
   const [childId, setChildId] = useState('');
+  const [childName, setChildName] = useState('');
   const [examinerId, setExaminerId] = useState(INITIAL_SESSION_CONTEXT.examinerId);
   const [parentalConsent, setParentalConsent] = useState<number>(0);
   const [schoolName, setSchoolName] = useState(INITIAL_SESSION_CONTEXT.schoolName);
@@ -1057,6 +1058,7 @@ export default function App() {
 
     const newRecord: StudentScreeningRecord = {
       Child_ID: childId.trim() || 'BAB-Unknown',
+      Child_Name: childName.trim() || undefined,
       Examiner_ID: examinerId.trim(),
       Examiner_Full_Name: examinerProfile?.fullName?.trim() || examinerId.trim(),
       Device_ID: examinerProfile?.deviceId?.trim() || getOrCreateDeviceId(),
@@ -1183,6 +1185,7 @@ export default function App() {
     if (!draft) return;
     draftHydratedRef.current = true;
     setChildId(draft.childId ?? '');
+    setChildName(draft.childName ?? '');
     setGradeLevel(draft.gradeLevel ?? INITIAL_SESSION_CONTEXT.gradeLevel ?? 1);
     setAgeYears(draft.ageYears ?? defaultAgeForGrade(INITIAL_SESSION_CONTEXT.gradeLevel ?? 1));
     setGender(draft.gender ?? '');
@@ -1227,6 +1230,7 @@ export default function App() {
       updatedAt: Date.now(),
       activeStep,
       childId,
+      childName,
       gradeLevel,
       ageYears,
       gender,
@@ -1264,6 +1268,7 @@ export default function App() {
   }, [
     activeTab,
     childId,
+    childName,
     gradeLevel,
     ageYears,
     gender,
@@ -1762,6 +1767,8 @@ export default function App() {
                 <RegistrationAndPaperStation
                   childId={childId}
                   setChildId={handleChildIdChange}
+                  childName={childName}
+                  setChildName={setChildName}
                   examinerId={examinerId}
                   setExaminerId={setExaminerId}
                   parentalConsent={parentalConsent}
