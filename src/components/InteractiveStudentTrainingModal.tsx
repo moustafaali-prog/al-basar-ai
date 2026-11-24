@@ -427,7 +427,7 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                       <h4><ClipboardCheck size={16} /> ماذا تفعل؟</h4>
                       <ol className="train-step-list">
                         {stage.steps.map((step, index) => (
-                          <li key={step}>
+                          <li key={`${step}-${index}`}>
                             <span>{index + 1}</span>
                             <p>{step}</p>
                           </li>
@@ -441,13 +441,13 @@ export const InteractiveStudentTrainingModal: React.FC<TrainingModalProps> = ({
                   <section className="train-block train-block--warn">
                     <h4><AlertTriangle size={16} /> لا تخلط بين هذه القواعد</h4>
                     <ul className="train-attention-list">
-                      {stage.attention.map((item) => <li key={item}>{item}</li>)}
+                      {stage.attention.map((item, i) => <li key={`${item}-${i}`}>{item}</li>)}
                     </ul>
                   </section>
                   <section className="train-block train-block--pass">
                     <h4><CheckCircle2 size={16} /> قبل أن تنتقل</h4>
                     <ul className="train-check-list">
-                      {stage.checklist.map((item) => <li key={item}>{item}</li>)}
+                      {stage.checklist.map((item, i) => <li key={`${item}-${i}`}>{item}</li>)}
                     </ul>
                   </section>
                 </div>

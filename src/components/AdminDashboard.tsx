@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 import { QRScannerModal } from './QRScannerModal';
-import { upsertScreeningRecord } from '../utils/supabaseClient';
+import { createSignedPhotoUrl, getSupabaseClient, upsertScreeningRecord } from '../utils/supabaseClient';
 
 import type { StudentScreeningRecord } from '../types';
 import { generateSPSS_CSV } from '../utils/acuityMath';
@@ -157,7 +157,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     const resolve = async () => {
-      const { createSignedPhotoUrl } = await import('../utils/supabaseClient');
       const next: PhotoMap = {};
       for (const path of paths) {
         if (cancelled) return;
@@ -250,7 +249,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleDeleteDiagRecords = async () => {
     if (!confirm('هل أنت متأكد من حذف جميع السجلات الاختبارية DIAG-*؟ لا يمكن التراجع عن هذا الإجراء.')) return;
     try {
-      const { getSupabaseClient } = await import('../utils/supabaseClient');
       const client = getSupabaseClient();
       if (!client) throw new Error('Supabase غير متصل.');
       const { error } = await client.from('student_screening_records').delete().like('child_id', 'DIAG-%');

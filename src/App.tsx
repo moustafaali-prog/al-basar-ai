@@ -625,6 +625,9 @@ export default function App() {
       const droppedColumns = new Set<string>();
       let lastError = '';
 
+      // Hoist heavy modules once per sync run to avoid repeated dynamic imports inside the loop
+      const { compressImageToBlob, photoFileName } = await import('./utils/imageCompress');
+
       for (const rec of pending) {
         /**
          * Photo handling: the compressed JPEG stays in IndexedDB (keyed by
@@ -638,9 +641,6 @@ export default function App() {
         const isLegacyPublicUrl = storedPhoto.startsWith('http');
         if (isUnuploaded || isLegacyPublicUrl) {
           try {
-            const { getEyePhoto } = await import('./utils/eyePhotoStore');
-            const { compressImageToBlob, photoFileName } = await import('./utils/imageCompress');
-
             let blob = await getEyePhoto(rec.Child_ID);
             if (!blob && storedPhoto.startsWith('data:')) {
               blob = await compressImageToBlob(storedPhoto, 1024, 0.85);
@@ -1130,7 +1130,6 @@ export default function App() {
     // The eye photo lives in IndexedDB (keyed by Child_ID), never in localStorage.
     if (eyePhoto) {
       try {
-        const { saveEyePhoto } = await import('./utils/eyePhotoStore');
         const stored = await saveEyePhoto(newRecord.Child_ID, eyePhoto.blob);
         if (!stored) {
           console.warn('Eye photo could not be stored in IndexedDB for', newRecord.Child_ID);
@@ -1728,7 +1727,7 @@ export default function App() {
                 <span className="step-dot__num">{step.num}</span>
                 <span className="step-dot__label">{step.label}</span>
               </div>
-              {idx < CLINICAL_STEPS.length - 1 && <span className="step-sep">→</span>}
+              {idx < CLINICAL_STEPS.length - 1 && <span key={`sep-${step.id}`} className="step-sep">→</span>}
             </React.Fragment>
           ))}
         </div>

@@ -304,7 +304,7 @@ export function mapSupabaseRowToRecord(row: Record<string, unknown>): StudentScr
     Smart_IOD_LogMAR: num(row.smart_iod_logmar) ?? 0,
     Smart_Time_Sec: num(row.smart_time_sec) ?? 0,
     Hirschberg_Asym_mm: num(row.hirschberg_asym_mm) ?? 0,
-    Hirschberg_Prism_Diopters: num(row.hirschberg_prism_diopeters) ?? 0,
+    Hirschberg_Prism_Diopters: num(row.hirschberg_prism_diopters) ?? 0,
     MRD1_Min_mm: num(row.mrd1_min_mm) ?? 0,
     Triage_Ocular_Flag: num(row.triage_ocular_flag) ?? 0,
     AI_Quality_Flag: num(row.ai_quality_flag),
